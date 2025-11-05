@@ -2,8 +2,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
-import Link from 'next/link'
-import Image from 'next/image'
+import PaymentSuccessPopup from '@/components/PaymentSuccessPopup'
 
 interface PaymentSuccessPageProps {
   searchParams: {
@@ -12,19 +11,27 @@ interface PaymentSuccessPageProps {
 }
 
 export default async function PaymentSuccessPage({ searchParams }: PaymentSuccessPageProps) {
+  console.log('🔵 [PAYMENT SUCCESS PAGE] Starting payment success page handler')
+  
   const session = await getServerSession(authOptions)
   if (!session?.user?.email) {
+    console.log('❌ [PAYMENT SUCCESS PAGE] No session found, redirecting to login')
     redirect('/login?callbackUrl=/payment/success')
   }
 
+  console.log('✅ [PAYMENT SUCCESS PAGE] Session found:', { email: session.user.email, role: session.user.role })
+
   const { order_id } = searchParams
+  console.log('📋 [PAYMENT SUCCESS PAGE] Order ID from query params:', order_id)
 
   if (!order_id) {
+    console.log('❌ [PAYMENT SUCCESS PAGE] No order_id provided, redirecting to dashboard')
     redirect('/dashboard')
   }
 
-  // Get payment and enrollment details
-  const payment = await prisma.payment.findUnique({
+  // Get payment record
+  console.log('🔍 [PAYMENT SUCCESS PAGE] Fetching payment from database for orderId:', order_id)
+  let payment = await prisma.payment.findUnique({
     where: { orderId: order_id },
     include: {
       user: true,
@@ -36,105 +43,292 @@ export default async function PaymentSuccessPage({ searchParams }: PaymentSucces
     }
   })
 
-  if (!payment || payment.user.email !== session.user.email) {
+  if (!payment) {
+    console.error('❌ [PAYMENT SUCCESS PAGE] Payment not found in database for orderId:', order_id)
     redirect('/dashboard')
   }
 
-  const enrollment = payment.enrollment?.[0]
+  if (payment.user.email !== session.user.email) {
+    console.error('❌ [PAYMENT SUCCESS PAGE] Payment user mismatch:', {
+      paymentUser: payment.user.email,
+      sessionUser: session.user.email
+    })
+    redirect('/dashboard')
+  }
+
+  console.log('✅ [PAYMENT SUCCESS PAGE] Payment found:', {
+    orderId: payment.orderId,
+    status: payment.status,
+    amount: payment.amount,
+    userId: payment.userId,
+    existingEnrollments: payment.enrollment?.length || 0
+  })
+
+  // Verify payment status with Cashfree API
+  console.log('🔍 [PAYMENT SUCCESS PAGE] Fetching order status from Cashfree API...')
+  let cashfreeOrderStatus = payment.status
+  let orderNote: string | null = null
+  let orderAmount: number | null = null
+
+  try {
+    const clientId = process.env.CASHFREE_CLIENT_ID
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET
+
+    console.log('🔑 [PAYMENT SUCCESS PAGE] Cashfree config:', {
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret,
+      env: process.env.CASHFREE_ENV || 'SANDBOX'
+    })
+
+    if (clientId && clientSecret) {
+      // Dynamic import to avoid Turbopack parsing issues
+      const { Cashfree, CFEnvironment } = await import('cashfree-pg')
+      const env = process.env.CASHFREE_ENV === 'PROD' ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX
+      const cashfree = new Cashfree(env, clientId, clientSecret)
+      console.log('📞 [PAYMENT SUCCESS PAGE] Calling Cashfree.PGFetchOrder with order_id:', order_id)
+      
+      let orderResponse
+      try {
+        // PGFetchOrder expects order_id as a string parameter, not an object
+        console.log(`📋 [PAYMENT SUCCESS PAGE] Calling PGFetchOrder with order_id string:`, order_id)
+        orderResponse = await cashfree.PGFetchOrder(order_id)
+      } catch (apiError: any) {
+        console.error('❌ [PAYMENT SUCCESS PAGE] Cashfree API error:', {
+          message: apiError?.message || 'Unknown error',
+          status: apiError?.response?.status,
+          statusText: apiError?.response?.statusText,
+          data: apiError?.response?.data,
+          code: apiError?.code
+        })
+        
+        // If order not found (400 or 404), continue with existing payment status
+        if (apiError?.response?.status === 400 || apiError?.response?.status === 404) {
+          console.warn('⚠️ [PAYMENT SUCCESS PAGE] Order not found in Cashfree - using existing payment status')
+          // Continue with existing payment status
+        } else {
+          // For other errors, log and continue
+          console.error('❌ [PAYMENT SUCCESS PAGE] Error fetching order from Cashfree, continuing with existing status')
+        }
+        // Continue with existing payment status
+      }
+      
+      if (orderResponse) {
+        console.log('📦 [PAYMENT SUCCESS PAGE] Cashfree API response:', {
+          status: orderResponse?.status,
+          hasData: !!orderResponse?.data,
+          orderData: orderResponse?.data ? JSON.stringify(orderResponse.data, null, 2) : 'No data'
+        })
+        
+        // Cashfree API returns order data directly in orderResponse.data, not in orderResponse.data.order
+        // The order object IS the data object itself
+        if (orderResponse?.data) {
+          const orderData = orderResponse.data
+          cashfreeOrderStatus = orderData.order_status || payment.status
+          orderNote = orderData.order_note || null
+          orderAmount = orderData.order_amount || null
+          
+          console.log('✅ [PAYMENT SUCCESS PAGE] Order details from Cashfree:', {
+            orderStatus: cashfreeOrderStatus,
+            orderNote: orderNote,
+            orderAmount: orderAmount,
+            previousStatus: payment.status
+          })
+          
+          // Update payment status in database
+          console.log('💾 [PAYMENT SUCCESS PAGE] Updating payment status in database to:', cashfreeOrderStatus)
+          await prisma.payment.update({
+            where: { orderId: order_id },
+            data: { status: cashfreeOrderStatus }
+          })
+          
+          // Update payment reference
+          payment = await prisma.payment.findUnique({
+            where: { orderId: order_id },
+            include: {
+              user: true,
+              enrollment: {
+                include: {
+                  course: true
+                }
+              }
+            }
+          })
+          console.log('✅ [PAYMENT SUCCESS PAGE] Payment status updated in database')
+        } else {
+          console.warn('⚠️ [PAYMENT SUCCESS PAGE] Cashfree response missing order data')
+        }
+      }
+    } else {
+      console.warn('⚠️ [PAYMENT SUCCESS PAGE] Cashfree credentials not configured, skipping API call')
+    }
+  } catch (error) {
+    console.error('❌ [PAYMENT SUCCESS PAGE] Error fetching order from Cashfree:', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    })
+    // Continue with existing payment status
+  }
+
+  // If payment is successful, ensure enrollment exists
+  // Note: In Cashfree test/sandbox mode, status might vary
+  const isPaymentSuccessful = cashfreeOrderStatus === 'PAID' || 
+                              cashfreeOrderStatus === 'SUCCESS' || 
+                              cashfreeOrderStatus === 'ACTIVE' ||
+                              cashfreeOrderStatus === 'COMPLETED' ||
+                              (cashfreeOrderStatus && cashfreeOrderStatus.toUpperCase().includes('SUCCESS')) ||
+                              (cashfreeOrderStatus && cashfreeOrderStatus.toUpperCase().includes('PAID'))
+
+  console.log('🔍 [PAYMENT SUCCESS PAGE] Payment status check:', {
+    cashfreeOrderStatus,
+    isPaymentSuccessful,
+    existingEnrollmentCount: payment?.enrollment?.length || 0
+  })
+
+  if (isPaymentSuccessful) {
+    const existingEnrollment = payment?.enrollment?.[0]
+    
+    if (!existingEnrollment) {
+      console.log('📚 [PAYMENT SUCCESS PAGE] No existing enrollment found, attempting to create...')
+      let course = null
+
+      // Try to find course from orderNote first (most reliable)
+      if (orderNote && orderNote.startsWith('course:')) {
+        const match = orderNote.match(/^course:([^|]+)/)
+        if (match) {
+          const courseSlug = match[1]
+          console.log('🔍 [PAYMENT SUCCESS PAGE] Attempting to find course by slug:', courseSlug)
+          course = await prisma.course.findUnique({
+            where: { slug: courseSlug }
+          })
+          console.log(course ? `✅ [PAYMENT SUCCESS PAGE] Course found by slug: ${course.title}` : `❌ [PAYMENT SUCCESS PAGE] Course not found by slug: ${courseSlug}`)
+        }
+      }
+
+      // Fallback: find course by matching payment amount
+      if (!course && payment) {
+        console.log('🔍 [PAYMENT SUCCESS PAGE] Attempting to find course by payment amount:', payment.amount, 'paise')
+        course = await prisma.course.findFirst({
+          where: { price: payment.amount }
+        })
+        console.log(course ? `✅ [PAYMENT SUCCESS PAGE] Course found by amount: ${course.title}` : `❌ [PAYMENT SUCCESS PAGE] Course not found by amount: ${payment.amount} paise`)
+      }
+
+      // Fallback: find course by orderAmount if available
+      if (!course && orderAmount) {
+        const amountInPaise = Math.round(orderAmount * 100)
+        console.log('🔍 [PAYMENT SUCCESS PAGE] Attempting to find course by order amount:', amountInPaise, 'paise')
+        course = await prisma.course.findFirst({
+          where: { price: amountInPaise }
+        })
+        console.log(course ? `✅ [PAYMENT SUCCESS PAGE] Course found by order amount: ${course.title}` : `❌ [PAYMENT SUCCESS PAGE] Course not found by order amount: ${amountInPaise} paise`)
+      }
+
+      if (course && payment) {
+        console.log('✅ [PAYMENT SUCCESS PAGE] Course identified:', {
+          courseId: course.id,
+          courseTitle: course.title,
+          courseSlug: course.slug,
+          price: course.price
+        })
+
+        // Check if enrollment already exists (race condition check)
+        console.log('🔍 [PAYMENT SUCCESS PAGE] Checking for existing enrollment...')
+        const enrollmentCheck = await prisma.enrollment.findUnique({
+          where: {
+            userId_courseId: {
+              userId: payment.userId,
+              courseId: course.id
+            }
+          }
+        })
+
+        if (!enrollmentCheck) {
+          console.log('📝 [PAYMENT SUCCESS PAGE] Creating enrollment...', {
+            userId: payment.userId,
+            courseId: course.id,
+            paymentId: payment.id
+          })
+          // Create enrollment immediately
+          const newEnrollment = await prisma.enrollment.create({
+            data: {
+              userId: payment.userId,
+              courseId: course.id,
+              status: 'ACTIVE',
+              paymentId: payment.id
+            }
+          })
+          console.log('✅ [PAYMENT SUCCESS PAGE] Enrollment created successfully:', {
+            enrollmentId: newEnrollment.id,
+            userId: newEnrollment.userId,
+            courseId: newEnrollment.courseId,
+            status: newEnrollment.status
+          })
+        } else {
+          console.log('ℹ️ [PAYMENT SUCCESS PAGE] Enrollment already exists:', {
+            enrollmentId: enrollmentCheck.id,
+            userId: enrollmentCheck.userId,
+            courseId: enrollmentCheck.courseId
+          })
+        }
+      } else {
+        console.error('❌ [PAYMENT SUCCESS PAGE] Course not found for order:', {
+          orderId: order_id,
+          orderNote: orderNote,
+          paymentAmount: payment?.amount,
+          orderAmount: orderAmount,
+          allCourses: await prisma.course.findMany({ select: { id: true, title: true, slug: true, price: true } })
+        })
+      }
+    } else {
+      console.log('ℹ️ [PAYMENT SUCCESS PAGE] Enrollment already exists:', {
+        enrollmentId: existingEnrollment.id,
+        courseId: existingEnrollment.courseId,
+        courseTitle: existingEnrollment.course?.title
+      })
+    }
+  } else {
+    console.log('⚠️ [PAYMENT SUCCESS PAGE] Payment not successful, status:', cashfreeOrderStatus)
+  }
+
+  // Get updated enrollment info
+  console.log('🔍 [PAYMENT SUCCESS PAGE] Fetching updated payment with enrollment...')
+  const updatedPayment = await prisma.payment.findUnique({
+    where: { orderId: order_id },
+    include: {
+      enrollment: {
+        include: {
+          course: true
+        }
+      }
+    }
+  })
+
+  const enrollment = updatedPayment?.enrollment?.[0]
   const course = enrollment?.course
 
+  console.log('📊 [PAYMENT SUCCESS PAGE] Final enrollment status:', {
+    hasEnrollment: !!enrollment,
+    enrollmentId: enrollment?.id,
+    courseId: enrollment?.courseId,
+    courseTitle: course?.title,
+    paymentStatus: updatedPayment?.status
+  })
+
+  // Only show success popup if payment is successful
+  if (!isPaymentSuccessful) {
+    console.log('⚠️ [PAYMENT SUCCESS PAGE] Payment not successful, redirecting to dashboard')
+    // If payment is not successful, redirect to dashboard
+    redirect('/dashboard')
+  }
+
+  console.log('✅ [PAYMENT SUCCESS PAGE] Rendering success popup')
   return (
     <div className="min-h-screen bg-brand-background">
-      {/* Header */}
-      <div className="flex w-full items-center justify-between pl-4 pr-2 py-2 sm:pl-6 sm:pr-3 sm:py-3">
-        <Link href="/" className="flex items-center gap-1 hover:opacity-90 transition-opacity">
-          <Image 
-            src="/assets/curriculum-mastery-logo-small.png" 
-            alt="Curriculum Mastery Logo" 
-            width={288} 
-            height={288} 
-            className="h-[108px] w-auto sm:h-[144px]"
-            priority
-          />
-          <div className="flex flex-col">
-            <span className="text-xl sm:text-3xl font-bold text-brand-primary leading-tight tracking-wide">Curriculum</span>
-            <span className="text-2xl sm:text-4xl font-bold text-brand-primary leading-tight uppercase">MASTERY</span>
-          </div>
-        </Link>
-      </div>
-
-      {/* Main Content */}
-      <main className="flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-2xl">
-          <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
-            {payment.status === 'PAID' && enrollment ? (
-              <>
-                {/* Success Icon */}
-                <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-6">
-                  <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-
-                <h1 className="text-3xl font-bold text-brand-primary mb-4">Payment Successful!</h1>
-                <p className="text-gray-600 mb-6">
-                  Congratulations! You have successfully enrolled in the course.
-                </p>
-
-                {course && (
-                  <div className="bg-brand-background rounded-xl p-6 mb-8">
-                    <h2 className="text-xl font-semibold text-brand-primary mb-2">{course.title}</h2>
-                    <p className="text-gray-600 mb-4">{course.description}</p>
-                    <div className="flex justify-center items-center gap-4 text-sm text-gray-500">
-                      <span>Order ID: {payment.orderId}</span>
-                      <span>•</span>
-                      <span>Amount: ₹{(payment.amount / 100).toLocaleString()}</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  <Link
-                    href="/dashboard"
-                    className="inline-block w-full rounded-xl bg-brand-primary px-6 py-4 text-lg font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                  >
-                    Go to Dashboard
-                  </Link>
-                  <Link
-                    href="/"
-                    className="inline-block w-full rounded-xl border-2 border-brand-primary px-6 py-4 text-lg font-semibold text-brand-primary hover:bg-brand-primary hover:text-white transition-all duration-200"
-                  >
-                    Back to Home
-                  </Link>
-                </div>
-              </>
-            ) : (
-              <>
-                {/* Pending/Failed Icon */}
-                <div className="mx-auto w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mb-6">
-                  <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                  </svg>
-                </div>
-
-                <h1 className="text-3xl font-bold text-brand-primary mb-4">Payment Processing</h1>
-                <p className="text-gray-600 mb-6">
-                  Your payment is being processed. Please check back in a few minutes.
-                </p>
-
-                <div className="space-y-4">
-                  <Link
-                    href="/dashboard"
-                    className="inline-block w-full rounded-xl bg-brand-primary px-6 py-4 text-lg font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                  >
-                    Check Dashboard
-                  </Link>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </main>
+      <PaymentSuccessPopup
+        courseTitle={course?.title}
+        orderId={order_id}
+        amount={payment?.amount ? payment.amount / 100 : 0}
+      />
     </div>
   )
 }

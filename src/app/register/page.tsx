@@ -49,10 +49,24 @@ function RegisterForm() {
       // Auto sign-in after registration
       const sign = await signIn("credentials", { redirect: false, email, password })
       if (sign?.error) throw new Error("Auto sign-in failed")
+      
       if (enrollAfter) {
         router.push("/?paynow=1");
       } else {
-        router.push("/dashboard");
+        // Check user role to determine redirect
+        try {
+          const userRes = await fetch('/api/auth/session')
+          const session = await userRes.json()
+          
+          if (session?.user?.role === 'ADMIN') {
+            router.push('/admin')
+          } else {
+            router.push('/dashboard')
+          }
+        } catch (error) {
+          // Fallback to dashboard if session fetch fails
+          router.push('/dashboard')
+        }
       }
     } catch (err: unknown) {
       if (err instanceof z.ZodError) {

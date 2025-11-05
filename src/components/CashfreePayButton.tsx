@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useState } from 'react'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
+import { load } from '@cashfreepayments/cashfree-js'
 
 interface CashfreePayButtonProps {
   courseId: string;
   courseTitle: string;
-  amount: string;
+  amount: string; // in rupees as string (e.g. "15400")
   className?: string;
   children: React.ReactNode;
 }
@@ -17,65 +20,76 @@ export default function CashfreePayButton({
   className = "",
   children 
 }: CashfreePayButtonProps) {
+  const [loading, setLoading] = useState(false)
+  const { data: session, status } = useSession()
+  const router = useRouter()
   
   const handlePayment = async () => {
-    // Debug logging
-    console.log('Course ID:', courseId);
-    console.log('Course Title:', courseTitle);
-    console.log('Amount received:', amount);
-    console.log('Amount type:', typeof amount);
+    if (loading) return
     
-    // Store course information in sessionStorage for Cashfree
-    const courseData = {
-      id: courseId,
-      title: courseTitle,
-      amount: amount,
-      timestamp: new Date().toISOString()
-    };
-    
-    sessionStorage.setItem('selectedCourse', JSON.stringify(courseData));
-    
-    // Create a unique order ID
-    const orderId = `${courseId}-${Date.now()}`;
-    
-    // Store order details
-    const orderData = {
-      orderId,
-      courseId,
-      courseTitle,
-      amount: parseInt(amount),
-      currency: 'INR',
-      timestamp: new Date().toISOString()
-    };
-    
-    sessionStorage.setItem('cashfreeOrder', JSON.stringify(orderData));
-    
-    // Determine the form code based on course ID
-    let formCode = 'pay_form'; // Default for Music Educators Course
-    
-    if (courseId === 'igcse-basic') {
-      formCode = 'basic_form';
-    } else if (courseId === 'igcse-advanced') {
-      formCode = 'advance_form';
-    } else if (courseId === 'ib-comprehensive') {
-      formCode = 'comprehensive_form';
+    // Check if user is authenticated
+    if (status === 'unauthenticated') {
+      router.push('/login?callbackUrl=/pricing')
+      return
     }
-    // For 'ib-igcse-educators', keep the default 'pay_form'
     
-    // Navigate to Cashfree payment form with specific form code
-    const paymentUrl = `https://payments.cashfree.com/forms?code=${formCode}`;
-    console.log('Payment URL:', paymentUrl);
+    if (status === 'loading') {
+      return // Still loading session
+    }
     
-    // Navigate to Cashfree payment form in same tab
-    window.location.href = paymentUrl;
-  };
+    setLoading(true)
+    try {
+      const orderAmount = parseFloat(amount)
+
+      const res = await fetch('/api/payments/cashfree', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courseId,
+          courseTitle,
+          orderAmount
+        })
+      })
+
+      const data = await res.json()
+      console.log('📦 [CASHFREE PAY BUTTON] API response:', {
+        ok: res.ok,
+        status: res.status,
+        data: JSON.stringify(data, null, 2)
+      })
+      
+      if (!res.ok) {
+        console.error('❌ [CASHFREE PAY BUTTON] API error:', data)
+        return
+      }
+
+      const paymentSessionId = data?.data?.payment_session_id || data?.data?.paymentSessionId || data?.payment_session_id || data?.paymentSessionId
+      console.log('🔑 [CASHFREE PAY BUTTON] Payment session ID:', paymentSessionId)
+      
+      if (!paymentSessionId) {
+        console.error('❌ [CASHFREE PAY BUTTON] No payment_session_id in response:', data)
+        return
+      }
+
+      const cf = await load({ mode: process.env.NEXT_PUBLIC_CASHFREE_MODE === 'PROD' ? 'production' : 'sandbox' })
+      await cf.checkout({
+        paymentSessionId,
+        redirectTarget: '_self'
+      })
+    } catch (err) {
+      // Handle error silently
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
-    <button
-      onClick={handlePayment}
-      className={className}
+    <button 
+      onClick={handlePayment} 
+      className={className} 
+      disabled={loading || status === 'loading'}
     >
-      {children}
+      {loading ? 'Processing…' : status === 'loading' ? 'Loading…' : children}
     </button>
-  );
+  )
 }

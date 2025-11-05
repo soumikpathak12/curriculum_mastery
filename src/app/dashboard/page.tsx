@@ -4,12 +4,22 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import Header from "@/components/Header";
-import { COURSE_PRICE } from "@/constant";
+import CourseEnrollButton from "@/components/CourseEnrollButton";
+import PaymentStatusChecker from "@/components/PaymentStatusChecker";
+import AssignmentsQuizzesTabs from "@/components/AssignmentsQuizzesTabs";
+
+// Force dynamic rendering to prevent static generation attempts
+export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     redirect("/login?callbackUrl=/dashboard");
+  }
+
+  // Redirect admins to admin dashboard
+  if (session.user?.role === 'ADMIN') {
+    redirect('/admin');
   }
 
   const user = await prisma.user.findUnique({
@@ -29,76 +39,246 @@ export default async function DashboardPage() {
     );
   }
 
-  // Get available courses
-  const availableCourses = await prisma.course.findMany({
-    include: { modules: { include: { lessons: true } } },
-  });
-
-  const enrollments = await prisma.enrollment.findMany({
-    where: { userId: user.id },
-    include: {
-      course: {
-        include: { modules: { include: { lessons: true } } },
+  // Get all available courses and enrollments in parallel for better performance
+  // NOTE: Payment verification is handled by PaymentStatusChecker component and webhooks
+  // We don't need to block the page render with Cashfree API calls
+  const [availableCourses, enrollments] = await Promise.all([
+    prisma.course.findMany({
+      include: { modules: { include: { lessons: true } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.enrollment.findMany({
+      where: { userId: user.id },
+      include: {
+        course: {
+          include: { 
+            modules: { 
+              include: { lessons: true },
+              orderBy: { order: 'asc' }
+            },
+            assignments: {
+              orderBy: { createdAt: 'desc' }
+            },
+            quizzes: {
+              orderBy: { createdAt: 'desc' }
+            }
+          },
+        },
       },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: { createdAt: "desc" },
+    })
+  ]);
+
+  // Get lesson progress, assignments, and quizzes in parallel
+  const enrolledCourseIds = enrollments.map(e => e.courseId);
+  
+  const [lessonProgress, assignments, quizzes] = await Promise.all([
+    enrolledCourseIds.length > 0 
+      ? prisma.lessonProgress.findMany({
+          where: { 
+            userId: user.id,
+            lesson: {
+              module: {
+                courseId: { in: enrolledCourseIds }
+              }
+            }
+          }
+        })
+      : Promise.resolve([]),
+    enrolledCourseIds.length > 0
+      ? prisma.assignment.findMany({
+          where: {
+            courseId: { in: enrolledCourseIds }
+          },
+          include: {
+            course: {
+              select: { title: true, slug: true }
+            },
+            submissions: {
+              where: { userId: user.id },
+              select: { id: true, status: true, createdAt: true, feedback: true }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        })
+      : Promise.resolve([]),
+    enrolledCourseIds.length > 0
+      ? prisma.quiz.findMany({
+          where: {
+            courseId: { in: enrolledCourseIds }
+          },
+          include: {
+            course: {
+              select: { title: true, slug: true }
+            },
+            submissions: {
+              where: { userId: user.id },
+              select: { id: true, score: true, submittedAt: true }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        })
+      : Promise.resolve([])
+  ]);
+  
+  const completedLessonIds = new Set(lessonProgress.map(lp => lp.lessonId));
 
   // Get courses not enrolled in
-  const enrolledCourseIds = new Set(enrollments.map((e: { courseId: string }) => e.courseId));
+  const enrolledCourseIdSet = new Set(enrolledCourseIds);
   const unenrolledCourses = availableCourses.filter(
-    (course: { id: string }) => !enrolledCourseIds.has(course.id)
+    (course: { id: string }) => !enrolledCourseIdSet.has(course.id)
   );
+
+  // Calculate stats for overview
+  const totalEnrollments = enrollments.length;
+  const pendingAssignments = assignments.filter(a => !a.submissions[0] && (!a.dueAt || new Date(a.dueAt) > new Date())).length;
+  const pendingQuizzes = quizzes.filter(q => !q.submissions[0] && (!q.dueAt || new Date(q.dueAt) > new Date())).length;
+  const overdueAssignments = assignments.filter(a => a.dueAt && new Date(a.dueAt) < new Date() && !a.submissions[0]).length;
+  const totalCompletedLessons = completedLessonIds.size;
 
   return (
     <div className="min-h-screen bg-brand-background flex flex-col">
+      <PaymentStatusChecker />
       <Header />
-      <main className="mx-auto max-w-6xl p-6 flex-1">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-brand-primary">Dashboard</h1>
-          <p className="mt-2 text-gray-600">
+      <main className="mx-auto max-w-7xl p-4 sm:p-6 flex-1">
+        {/* Dashboard Header */}
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-brand-primary mb-1">Dashboard</h1>
+          <p className="text-gray-600">
             Welcome back{session.user.name ? `, ${session.user.name}` : ""}!
           </p>
         </div>
 
-        {/* Available Courses to Enroll */}
-        {unenrolledCourses.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-semibold text-brand-primary mb-4">
-              Available Courses
-            </h2>
-            <div className="grid gap-6">
-              {unenrolledCourses.map((course: any) => {
-                const totalLessons = course.modules.reduce(
+        {/* Overview Stats Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white rounded-xl shadow-md p-4 border-l-4 border-brand-primary">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">My Courses</p>
+                <p className="text-2xl font-bold text-brand-primary">{totalEnrollments}</p>
+              </div>
+              <div className="bg-brand-primary/10 rounded-lg p-3">
+                <svg className="w-6 h-6 text-brand-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-md p-4 border-l-4 border-blue-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Pending Assignments</p>
+                <p className="text-2xl font-bold text-blue-600">{pendingAssignments}</p>
+              </div>
+              <div className="bg-blue-100 rounded-lg p-3">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-md p-4 border-l-4 border-purple-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Pending Quizzes</p>
+                <p className="text-2xl font-bold text-purple-600">{pendingQuizzes}</p>
+              </div>
+              <div className="bg-purple-100 rounded-lg p-3">
+                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-md p-4 border-l-4 border-green-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Completed Lessons</p>
+                <p className="text-2xl font-bold text-green-600">{totalCompletedLessons}</p>
+              </div>
+              <div className="bg-green-100 rounded-lg p-3">
+                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {overdueAssignments > 0 && (
+          <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-4 mb-6">
+            <div className="flex items-center">
+              <svg className="w-5 h-5 text-red-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-sm font-medium text-red-800">
+                You have {overdueAssignments} overdue assignment{overdueAssignments > 1 ? 's' : ''}. Please submit them soon.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* My Enrolled Courses - Information Only */}
+        {enrollments.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-semibold text-brand-primary">My Enrolled Courses</h2>
+              {enrollments.length > 3 && (
+                <span className="text-sm text-gray-500">{enrollments.length} courses</span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {enrollments.map((en) => {
+                const totalLessons = en.course.modules.reduce(
                   (acc: number, m: any) => acc + m.lessons.length,
+                  0
+                );
+                const completedCount = en.course.modules.reduce(
+                  (acc: number, m: any) =>
+                    acc +
+                    m.lessons.filter((l: any) => completedLessonIds.has(l.id)).length,
                   0
                 );
                 return (
                   <div
-                    key={course.id}
-                    className="bg-white rounded-2xl shadow-lg p-6"
+                    key={en.id}
+                    className="bg-white rounded-xl shadow-md p-5 border border-gray-100"
                   >
-                    <h3 className="text-xl font-semibold text-brand-primary mb-2">
-                      {course.title}
-                    </h3>
-                    <p className="text-gray-600 mb-4 text-sm">
-                      {course.description}
-                    </p>
-                    <div className="flex gap-4 items-center text-sm text-gray-500 mb-4">
-                      <span>{course.modules.length} modules</span>
-                      <span>{totalLessons} lessons</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-2xl font-bold text-brand-primary">
-                        ₹{COURSE_PRICE}
-                      </span>
-
-                      <Link
-                        href="https://payments.cashfree.com/forms?code=pay_form"
-                        className="rounded-lg px-5 py-2.5 text-base font-medium text-white shadow-md hover:shadow-lg transition-all bg-brand-primary"
+                    <div className="flex items-start justify-between mb-3">
+                      <h3 className="text-lg font-semibold text-brand-primary line-clamp-2 flex-1">
+                        {en.course.title}
+                      </h3>
+                      <span
+                        className={`ml-2 px-2 py-1 rounded-full text-xs font-medium shrink-0 ${
+                          en.status === "ACTIVE"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-yellow-100 text-yellow-800"
+                        }`}
                       >
-                        Enroll Now
-                      </Link>
+                        {en.status}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-xs text-gray-500">
+                      <div className="flex items-center gap-3">
+                        <span>{en.course.modules.length} modules</span>
+                        <span>•</span>
+                        <span>{totalLessons} lessons</span>
+                        <span>•</span>
+                        <span className="text-brand-primary font-medium">{completedCount} completed</span>
+                      </div>
+                      <div className="pt-2 border-t border-gray-100">
+                        <span className="text-gray-600 font-medium">Enrolled on: </span>
+                        <span className="text-gray-700">
+                          {new Date(en.createdAt).toLocaleDateString('en-IN', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                          })}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -107,8 +287,55 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* Enrolled Courses */}
-        {/* {enrollments.length === 0 ? (
+        {/* Other Available Courses */}
+        {unenrolledCourses.length > 0 && (
+          <div className="mb-6">
+            <h2 className="text-2xl font-semibold text-brand-primary mb-4">Other Available Courses</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {unenrolledCourses.map((course: any) => {
+                const totalLessons = course.modules.reduce(
+                  (acc: number, m: any) => acc + m.lessons.length,
+                  0
+                );
+                return (
+                  <div
+                    key={course.id}
+                    className="bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow p-5 border border-gray-100"
+                  >
+                    <h3 className="text-lg font-semibold text-brand-primary mb-2 line-clamp-2">
+                      {course.title}
+                    </h3>
+                    <p className="text-gray-600 mb-4 text-sm line-clamp-3">
+                      {course.description}
+                    </p>
+                    <div className="flex items-center gap-3 text-xs text-gray-500 mb-4">
+                      <span>{course.modules.length} modules</span>
+                      <span>•</span>
+                      <span>{totalLessons} lessons</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xl font-bold text-brand-primary">
+                        ₹{(course.price / 100).toLocaleString('en-IN')}
+                      </span>
+                      <CourseEnrollButton
+                        courseId={course.id}
+                        courseSlug={course.slug}
+                        courseTitle={course.title}
+                        coursePrice={course.price}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Assignments and Quizzes - Tab Based */}
+        <AssignmentsQuizzesTabs assignments={assignments} quizzes={quizzes} />
+
+        {/* No Enrollments Message */}
+        {enrollments.length === 0 && unenrolledCourses.length === 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-8 text-center">
             <h2 className="text-xl font-semibold text-brand-primary mb-2">
               No Enrollments Yet
@@ -124,89 +351,7 @@ export default async function DashboardPage() {
               Browse Courses
             </Link>
           </div>
-        ) : (
-          <div>
-            <h2 className="text-2xl font-semibold text-brand-primary mb-4">
-              My Courses
-            </h2>
-            <div className="space-y-6">
-              {enrollments.map((en) => {
-                const lessons = en.course.modules.reduce(
-                  (acc, m) => acc + m.lessons.length,
-                  0
-                );
-                const completedCount = en.course.modules.reduce(
-                  (acc, m) =>
-                    acc +
-                    m.lessons.filter((l) => completedSet.has(l.id)).length,
-                  0
-                );
-                const pct =
-                  lessons > 0
-                    ? Math.round((completedCount / lessons) * 100)
-                    : 0;
-                return (
-                  <div
-                    key={en.id}
-                    className="bg-white rounded-2xl shadow-lg p-6"
-                  >
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                      <div className="flex-1">
-                        <h3 className="text-xl font-semibold text-brand-primary mb-2">
-                          {en.course.title}
-                        </h3>
-                        <p className="text-gray-600 mb-3">
-                          {en.course.description}
-                        </p>
-                        <div className="flex flex-wrap gap-4 text-sm text-gray-500 mb-3">
-                          <span>{en.course.modules.length} modules</span>
-                          <span>{lessons} lessons</span>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              en.status === "ACTIVE"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-yellow-100 text-yellow-800"
-                            }`}
-                          >
-                            {en.status}
-                          </span>
-                        </div>
-                        <div className="mb-3">
-                          <div className="flex justify-between text-sm mb-1">
-                            <span>Progress</span>
-                            <span>
-                              {completedCount}/{lessons} ({pct}%)
-                            </span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div
-                              className="bg-brand-primary h-2 rounded-full transition-all duration-300"
-                              style={{ width: `${pct}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <Link
-                          href={`/course/${en.course.slug}`}
-                          className="rounded-xl bg-brand-primary px-6 py-3 text-white font-semibold text-center hover:shadow-lg transition-all"
-                        >
-                          Continue Learning
-                        </Link>
-                        <Link
-                          href={`/course/${en.course.slug}/syllabus`}
-                          className="rounded-xl border-2 border-brand-primary px-6 py-3 text-brand-primary font-semibold text-center hover:bg-brand-primary hover:text-white transition-all"
-                        >
-                          View Syllabus
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )} */}
+        )}
       </main>
       <footer className="border-t bg-gray-50 mt-auto">
         <div className="mx-auto max-w-6xl p-4 sm:p-6">

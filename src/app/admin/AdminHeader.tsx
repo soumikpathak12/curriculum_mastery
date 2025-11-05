@@ -15,8 +15,7 @@ export default function AdminHeader() {
           <Link href="/admin/course" className="hover:underline">Course</Link>
           <Link href="/admin/assignments" className="hover:underline">Assignments</Link>
           <Link href="/admin/payments" className="hover:underline">Payments</Link>
-          <Link href="/admin/subscribers" className="hover:underline">Subscribers</Link>
-          <Link href="/admin/newsletter" className="hover:underline">Newsletter</Link>
+          <Link href="/admin/mailers" className="hover:underline">Send Mailers</Link>
         </nav>
       </div>
       <div className="flex items-center gap-3 text-sm">

@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-1.0.x"]
@@ -15,38 +9,34 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String?
-  role         Role     @default(STUDENT)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
+  id             String           @id @default(cuid())
+  email          String           @unique
+  passwordHash   String
+  name           String?
+  role           Role             @default(STUDENT)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
   enrollments    Enrollment[]
-  submissions    Submission[]
-  payments       Payment[]
   LessonProgress LessonProgress[]
-}
-
-enum Role {
-  ADMIN
-  STUDENT
+  payments       Payment[]
+  submissions    Submission[]
+  quizSubmissions QuizSubmission[]
 }
 
 model Course {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   title       String
-  slug        String   @unique
+  slug        String       @unique
   description String?
-  price       Int // amount in smallest currency unit (e.g., paise)
-  currency    String   @default("INR")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  modules     Module[]
-  enrollments Enrollment[]
+  price       Int
+  currency    String       @default("INR")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   assignments Assignment[]
+  enrollments Enrollment[]
+  modules     Module[]
+  materials   CourseMaterial[]
+  quizzes     Quiz[]
 }
 
 model Module {
@@ -56,24 +46,22 @@ model Module {
   order     Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  course  Course   @relation(fields: [courseId], references: [id])
-  lessons Lesson[]
+  lessons   Lesson[]
+  course    Course   @relation(fields: [courseId], references: [id])
 
   @@index([courseId])
 }
 
 model Lesson {
-  id        String   @id @default(cuid())
-  moduleId  String
-  title     String
-  order     Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id             String           @id @default(cuid())
+  moduleId       String
+  title          String
+  order          Int
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
   module         Module           @relation(fields: [moduleId], references: [id])
-  resources      Resource[]
   LessonProgress LessonProgress[]
+  resources      Resource[]
 
   @@index([moduleId])
 }
@@ -82,19 +70,12 @@ model Resource {
   id       String       @id @default(cuid())
   lessonId String
   type     ResourceType
-  fileKey  String // storage key in S3/R2
+  fileKey  String
   filename String
   size     Int
-
-  lesson Lesson @relation(fields: [lessonId], references: [id])
+  lesson   Lesson       @relation(fields: [lessonId], references: [id])
 
   @@index([lessonId])
-}
-
-enum ResourceType {
-  PDF
-  DOC
-  DOCX
 }
 
 model Enrollment {
@@ -104,51 +85,59 @@ model Enrollment {
   status    EnrollmentStatus @default(ACTIVE)
   paymentId String?
   createdAt DateTime         @default(now())
-
-  user    User     @relation(fields: [userId], references: [id])
-  course  Course   @relation(fields: [courseId], references: [id])
-  payment Payment? @relation(fields: [paymentId], references: [id])
+  course    Course           @relation(fields: [courseId], references: [id])
+  payment   Payment?         @relation(fields: [paymentId], references: [id])
+  user      User             @relation(fields: [userId], references: [id])
 
   @@unique([userId, courseId])
   @@index([userId])
   @@index([courseId])
 }
 
-enum EnrollmentStatus {
-  ACTIVE
-  PENDING
-  CANCELLED
-}
-
 model Payment {
-  id        String   @id @default(cuid())
-  provider  String   @default("razorpay")
-  orderId   String   @unique
-  amount    Int
-  currency  String   @default("INR")
-  status    String
-  userId    String
-  createdAt DateTime @default(now())
-
-  user       User         @relation(fields: [userId], references: [id])
+  id         String       @id @default(cuid())
+  provider   String       @default("razorpay")
+  orderId    String       @unique
+  amount     Int
+  currency   String       @default("INR")
+  status     String
+  userId     String
+  createdAt  DateTime     @default(now())
   enrollment Enrollment[]
+  user       User         @relation(fields: [userId], references: [id])
 
   @@index([userId])
 }
 
 model Assignment {
-  id          String    @id @default(cuid())
+  id          String       @id @default(cuid())
   courseId    String
   title       String
   description String?
   dueAt       DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   course      Course       @relation(fields: [courseId], references: [id])
   submissions Submission[]
+  resources   AssignmentResource[]
 
   @@index([courseId])
+}
+
+/// Assignment resources (PDF, Word files)
+model AssignmentResource {
+  id           String       @id @default(cuid())
+  assignmentId String
+  title        String
+  type         ResourceType
+  fileKey      String
+  filename     String
+  size         Int
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  assignment   Assignment   @relation(fields: [assignmentId], references: [id])
+
+  @@index([assignmentId])
 }
 
 model Submission {
@@ -160,25 +149,18 @@ model Submission {
   feedback     String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
-
-  assignment Assignment @relation(fields: [assignmentId], references: [id])
-  user       User       @relation(fields: [userId], references: [id])
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id])
+  user         User             @relation(fields: [userId], references: [id])
 
   @@index([assignmentId])
   @@index([userId])
-}
-
-enum SubmissionStatus {
-  SUBMITTED
-  REVIEWED
-  REVISE
 }
 
 model Subscriber {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
-  tags      String? // comma-separated for simplicity in v1
+  tags      String?
   createdAt DateTime @default(now())
 }
 
@@ -192,15 +174,10 @@ model NewsletterSubscriber {
 model Newsletter {
   id        String           @id @default(cuid())
   title     String
-  content   String // markdown or HTML
+  content   String
   status    NewsletterStatus @default(DRAFT)
   createdAt DateTime         @default(now())
   sentAt    DateTime?
-}
-
-enum NewsletterStatus {
-  DRAFT
-  SENT
 }
 
 /// Tracks per-user lesson completion
@@ -209,11 +186,108 @@ model LessonProgress {
   userId      String
   lessonId    String
   completedAt DateTime @default(now())
-
-  user   User   @relation(fields: [userId], references: [id])
-  lesson Lesson @relation(fields: [lessonId], references: [id])
+  lesson      Lesson   @relation(fields: [lessonId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
 
   @@unique([userId, lessonId])
   @@index([userId])
   @@index([lessonId])
+}
+
+enum Role {
+  ADMIN
+  STUDENT
+}
+
+enum ResourceType {
+  PDF
+  DOC
+  DOCX
+  PPT
+  PPTX
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  PENDING
+  CANCELLED
+}
+
+enum SubmissionStatus {
+  SUBMITTED
+  REVIEWED
+  REVISE
+}
+
+enum NewsletterStatus {
+  DRAFT
+  SENT
+}
+
+/// Course materials (PDF, Word, PPT files)
+model CourseMaterial {
+  id        String       @id @default(cuid())
+  courseId  String
+  title     String
+  type      ResourceType
+  fileKey   String
+  filename  String
+  size      Int
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  course    Course       @relation(fields: [courseId], references: [id])
+
+  @@index([courseId])
+}
+
+/// Quiz system
+model Quiz {
+  id          String   @id @default(cuid())
+  courseId    String
+  title       String
+  description String?
+  dueAt       DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  course      Course       @relation(fields: [courseId], references: [id])
+  questions   QuizQuestion[]
+  submissions QuizSubmission[]
+
+  @@index([courseId])
+}
+
+/// Quiz questions (MCQ and Fill in the blanks)
+model QuizQuestion {
+  id        String      @id @default(cuid())
+  quizId    String
+  type      QuestionType
+  question  String
+  options   String[]
+  correctAnswer String?
+  order     Int
+  createdAt DateTime    @default(now())
+  quiz      Quiz        @relation(fields: [quizId], references: [id])
+
+  @@index([quizId])
+}
+
+enum QuestionType {
+  MCQ
+  FILL_IN_BLANK
+}
+
+/// Quiz submissions
+model QuizSubmission {
+  id           String   @id @default(cuid())
+  quizId       String
+  userId       String
+  answers      Json
+  score        Int?
+  submittedAt  DateTime @default(now())
+  quiz         Quiz     @relation(fields: [quizId], references: [id])
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@unique([quizId, userId])
+  @@index([quizId])
+  @@index([userId])
 }

@@ -65,7 +65,7 @@ export default function Header() {
             alt="Curriculum Mastery Logo"
             width={288}
             height={288}
-            className="h-[120px] w-auto sm:h-[160px] md:h-[220px] -my-4 sm:-my-6 md:-my-8"
+            className="h-[120px] w-auto sm:h-[160px] md:h-[170px] -my-4 sm:-my-6 md:-my-7"
             priority
           />
     

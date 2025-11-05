@@ -28,8 +28,19 @@ function LoginForm() {
       setError("Invalid email or password")
       return
     }
-    const callbackUrl = search.get("callbackUrl") || "/dashboard"
-    router.push(callbackUrl)
+    
+    // Check if there's a specific callback URL
+    const callbackUrl = search.get("callbackUrl")
+    if (callbackUrl) {
+      // Use window.location for immediate redirect (faster than router.push)
+      window.location.href = callbackUrl
+      return
+    }
+    
+    // Refresh session and redirect - use window.location for immediate redirect
+    // This avoids the delay from fetching session and using router
+    router.refresh()
+    window.location.href = '/dashboard'
   }
 
   return (

@@ -3,8 +3,8 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET() {
   try {
-    // For now, return the first course with its structure
-    const course = await prisma.course.findFirst({
+    // Return all courses
+    const courses = await prisma.course.findMany({
       include: {
         modules: {
           orderBy: { order: 'asc' },
@@ -17,11 +17,12 @@ export async function GET() {
         },
         assignments: true,
       },
+      orderBy: { createdAt: 'asc' }
     })
 
-    return NextResponse.json({ course })
+    return NextResponse.json({ courses })
   } catch (e) {
     console.error('GET /api/admin/course/tree error', e)
-    return NextResponse.json({ error: 'Failed to load course' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to load courses' }, { status: 500 })
   }
 }
