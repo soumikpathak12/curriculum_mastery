@@ -9,6 +9,9 @@ import type { Role } from '@prisma/client'
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as Adapter,
   session: { strategy: 'jwt' },
+  pages: {
+    signIn: '/login',
+  },
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -20,6 +23,10 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials?.password) return null
         const user = await prisma.user.findUnique({ where: { email: credentials.email } })
         if (!user) return null
+        // Check if user is blocked
+        if (user.blocked) {
+          throw new Error('Your account has been blocked. Please contact support.')
+        }
         const valid = await bcrypt.compare(credentials.password, user.passwordHash)
         if (!valid) return null
         return { id: user.id, email: user.email, name: user.name, role: user.role as Role }
@@ -39,5 +46,16 @@ export const authOptions: NextAuthOptions = {
       }
       return session
     },
+    async redirect({ url, baseUrl }) {
+      // If a callbackUrl is provided, use it
+      if (url.startsWith(baseUrl)) {
+        return url
+      }
+      // Default redirect to dashboard for students
+      // Note: Role-based redirect is handled in login page since redirect callback
+      // doesn't have direct access to user role in all cases
+      return `${baseUrl}/dashboard`
+    },
   },
+  debug: process.env.NODE_ENV === 'development',
 }

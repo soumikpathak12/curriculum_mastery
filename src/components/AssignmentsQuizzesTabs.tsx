@@ -174,14 +174,14 @@ export default function AssignmentsQuizzesTabs({ assignments, quizzes }: Assignm
                     {submission ? (
                       <Link
                         href={`/assignments/${assignment.id}/submission`}
-                        className="inline-block text-center rounded-lg bg-brand-primary px-3 py-2 text-white font-medium text-xs hover:bg-opacity-90 transition-all w-full"
+                        className="inline-block text-center rounded-lg bg-brand-primary px-4 py-2 text-white font-medium text-xs hover:bg-opacity-90 transition-all"
                       >
                         View Submission
                       </Link>
                     ) : (
                       <Link
                         href={`/assignments/${assignment.id}/submit`}
-                        className="inline-block text-center rounded-lg bg-brand-primary px-3 py-2 text-white font-medium text-xs hover:bg-opacity-90 transition-all w-full"
+                        className="inline-block text-center rounded-lg bg-brand-primary px-4 py-2 text-white font-medium text-sm hover:bg-opacity-90 transition-all"
                       >
                         Submit Assignment
                       </Link>
@@ -285,14 +285,14 @@ export default function AssignmentsQuizzesTabs({ assignments, quizzes }: Assignm
                     {submission ? (
                       <Link
                         href={`/quizzes/${quiz.id}/results`}
-                        className="inline-block text-center rounded-lg bg-brand-primary px-3 py-2 text-white font-medium text-xs hover:bg-opacity-90 transition-all w-full"
+                        className="inline-block text-center rounded-lg bg-brand-primary px-4 py-2 text-white font-medium text-xs hover:bg-opacity-90 transition-all"
                       >
                         View Results
                       </Link>
                     ) : (
                       <Link
                         href={`/quizzes/${quiz.id}/take`}
-                        className="inline-block text-center rounded-lg bg-brand-primary px-3 py-2 text-white font-medium text-xs hover:bg-opacity-90 transition-all w-full"
+                        className="inline-block text-center rounded-lg bg-brand-primary px-4 py-2 text-white font-medium text-sm hover:bg-opacity-90 transition-all"
                       >
                         Take Quiz
                       </Link>

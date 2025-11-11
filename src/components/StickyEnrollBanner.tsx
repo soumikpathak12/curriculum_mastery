@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { useSession } from 'next-auth/react'
+import { useState, useEffect } from 'react'
+import CashfreePayButton from '@/components/CashfreePayButton'
 
 interface Course {
   id?: string;
@@ -16,10 +18,12 @@ interface StickyEnrollBannerProps {
 }
 
 export default function StickyEnrollBanner({ course }: StickyEnrollBannerProps) {
-  const { data: session } = useSession()
+  const { data: session, status } = useSession()
+  const [isMounted, setIsMounted] = useState(false)
   
   // Default course data (fallback to IB & IGCSE Music Educators Course)
   const defaultCourse = {
+    id: 'ib-igcse-educators',
     title: 'IB & IGCSE Music Educators Course',
     price: '₹49,900/-',
     duration: '12 Hours',
@@ -27,6 +31,15 @@ export default function StickyEnrollBanner({ course }: StickyEnrollBannerProps) 
   };
   
   const currentCourse = course || defaultCourse;
+
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
+  // Extract numeric amount from price string (e.g., "₹15,400/-" -> "15400")
+  const getAmount = (price: string): string => {
+    return price.replace(/[₹,/-]/g, '').replace(/\s+/g, '').trim()
+  }
   
   return (
     <div className="w-full">
@@ -89,6 +102,28 @@ export default function StickyEnrollBanner({ course }: StickyEnrollBannerProps) 
         </div>
 
         {/* Enroll Button */}
+        {status === 'loading' || !isMounted ? (
+          <div className="block w-full text-center rounded-lg px-6 py-3 text-lg font-semibold text-white shadow-lg bg-brand-primary animate-pulse">
+            Loading...
+          </div>
+        ) : session ? (
+          <Link 
+            href="/dashboard"
+            className="block w-full text-center rounded-lg px-6 py-3 text-lg font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:scale-105 bg-brand-primary"
+          >
+            Go to Dashboard
+          </Link>
+        ) : (
+          <CashfreePayButton
+            courseId={currentCourse.id || 'ib-igcse-educators'}
+            courseTitle={currentCourse.title}
+            amount={getAmount(currentCourse.price)}
+            className="block w-full text-center rounded-lg px-6 py-3 text-lg font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:scale-105 bg-brand-primary cursor-pointer"
+          >
+            Enroll Now
+          </CashfreePayButton>
+        )}
+        {/* Commented out: Cashfree form routing - now uses CashfreePayButton for direct course enrollment
         <Link 
           href={session ? "/dashboard" : (() => {
             // Determine the form code based on course ID
@@ -109,6 +144,7 @@ export default function StickyEnrollBanner({ course }: StickyEnrollBannerProps) 
         >
           {session ? "Go to Dashboard" : "Enroll Now"}
         </Link>
+        */}
 
         {/* Additional Info */}
         <p className="text-xs text-gray-500 text-center mt-3">

@@ -25,7 +25,12 @@ function LoginForm() {
     })
     setLoading(false)
     if (res?.error) {
-      setError("Invalid email or password")
+      // Check if it's a blocked account error
+      if (res.error.includes('blocked')) {
+        setError("Your account has been blocked. Please contact support.")
+      } else {
+        setError("Invalid email or password")
+      }
       return
     }
     
@@ -37,9 +42,9 @@ function LoginForm() {
       return
     }
     
-    // Refresh session and redirect - use window.location for immediate redirect
-    // This avoids the delay from fetching session and using router
-    router.refresh()
+    // Redirect all users to dashboard
+    // The dashboard page will handle redirecting admins to /admin
+    // This is more reliable than fetching session immediately after login
     window.location.href = '/dashboard'
   }
 

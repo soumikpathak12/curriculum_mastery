@@ -12,7 +12,7 @@ export default function AdminHeader() {
       <div className="flex items-center gap-3">
         <Link href="/admin" className="font-semibold">Admin</Link>
         <nav className="flex items-center gap-3 text-sm text-gray-600">
-          <Link href="/admin/course" className="hover:underline">Course</Link>
+          <Link href="/admin/users" className="hover:underline">User Management</Link>
           <Link href="/admin/assignments" className="hover:underline">Assignments</Link>
           <Link href="/admin/payments" className="hover:underline">Payments</Link>
           <Link href="/admin/mailers" className="hover:underline">Send Mailers</Link>

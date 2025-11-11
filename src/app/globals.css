@@ -54,3 +54,13 @@ body {
 html {
   scroll-behavior: smooth;
 }
+
+/* Button Cursor */
+button {
+  cursor: pointer;
+}
+
+/* Disabled buttons should not have pointer cursor */
+button:disabled {
+  cursor: not-allowed;
+}

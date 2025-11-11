@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     const enrollments = await prisma.enrollment.findMany({
       include: {
         user: { select: { id: true, name: true, email: true } },
-        course: { select: { title: true } },
+        course: { select: { id: true, title: true, price: true } },
         payment: { select: { id: true, orderId: true, amount: true, status: true, provider: true } }
       },
       orderBy: { createdAt: 'desc' }

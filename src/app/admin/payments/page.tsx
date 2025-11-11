@@ -34,7 +34,9 @@ interface Enrollment {
     email: string
   }
   course: {
+    id?: string
     title: string
+    price?: number | null
   }
   payment: {
     id: string
@@ -45,19 +47,35 @@ interface Enrollment {
   } | null
 }
 
+interface Course {
+  id: string
+  title: string
+  slug: string
+  price?: number
+}
+
 export default function AdminPaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([])
   const [enrollments, setEnrollments] = useState<Enrollment[]>([])
+  const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'payments' | 'enrollments'>('payments')
+  const [activeTab, setActiveTab] = useState<'payments' | 'enrollments' | 'manual-enroll'>('payments')
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'CANCELLED'>('ALL')
+  
+  // Manual enrollment form state
+  const [enrollEmail, setEnrollEmail] = useState('')
+  const [enrollCourseId, setEnrollCourseId] = useState('')
+  const [enrolling, setEnrolling] = useState(false)
+  const [enrollError, setEnrollError] = useState('')
+  const [enrollSuccess, setEnrollSuccess] = useState('')
 
   const loadData = async () => {
     try {
       setLoading(true)
-      const [paymentsRes, enrollmentsRes] = await Promise.all([
+      const [paymentsRes, enrollmentsRes, coursesRes] = await Promise.all([
         fetch('/api/admin/payments'),
-        fetch('/api/admin/enrollments')
+        fetch('/api/admin/enrollments'),
+        fetch('/api/admin/course/tree')
       ])
       
       if (paymentsRes.ok) {
@@ -67,12 +85,72 @@ export default function AdminPaymentsPage() {
       
       if (enrollmentsRes.ok) {
         const enrollmentsData = await enrollmentsRes.json()
+        // Debug: Check if price is in the data
+        if (enrollmentsData.enrollments?.length > 0) {
+          console.log('Enrollment sample:', enrollmentsData.enrollments[0])
+        }
         setEnrollments(enrollmentsData.enrollments)
+      }
+      
+      if (coursesRes.ok) {
+        const coursesData = await coursesRes.json()
+        // Flatten the course tree to get all courses
+        const allCourses: Course[] = []
+        coursesData.courses?.forEach((course: any) => {
+          allCourses.push({
+            id: course.id,
+            title: course.title,
+            slug: course.slug,
+            price: course.price
+          })
+        })
+        setCourses(allCourses)
       }
     } catch (error) {
       console.error('Failed to load data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+  
+  const handleManualEnroll = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setEnrollError('')
+    setEnrollSuccess('')
+    
+    if (!enrollEmail || !enrollCourseId) {
+      setEnrollError('Please fill in all fields')
+      return
+    }
+    
+    setEnrolling(true)
+    try {
+      const res = await fetch('/api/admin/enrollments/manual-enroll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: enrollEmail.trim().toLowerCase(),
+          courseId: enrollCourseId
+        })
+      })
+      
+      const data = await res.json()
+      
+      if (!res.ok) {
+        setEnrollError(data.error || 'Failed to enroll student')
+        return
+      }
+      
+      setEnrollSuccess(`Successfully enrolled ${data.enrollment.user.email} in ${data.enrollment.course.title}`)
+      setEnrollEmail('')
+      setEnrollCourseId('')
+      // Reload enrollments to show the new one
+      loadData()
+    } catch (error) {
+      console.error('Enrollment error:', error)
+      setEnrollError('An error occurred. Please try again.')
+    } finally {
+      setEnrolling(false)
     }
   }
 
@@ -84,13 +162,20 @@ export default function AdminPaymentsPage() {
     filterStatus === 'ALL' || enrollment.status === filterStatus
   )
 
-  const formatAmount = (amount: number, currency: string) => {
+  const formatAmount = (amount: number | null | undefined, currency: string) => {
+    if (amount == null || amount === undefined) {
+      return 'N/A'
+    }
+    const numAmount = typeof amount === 'number' ? amount : Number(amount)
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return 'N/A'
+    }
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: currency,
       minimumFractionDigits: 0,
       maximumFractionDigits: 2
-    }).format(amount / 100) // Convert from paise to rupees
+    }).format(numAmount / 100) // Convert from paise to rupees
   }
 
   const getStatusColor = (status: string) => {
@@ -131,6 +216,60 @@ export default function AdminPaymentsPage() {
         <p className="mt-2 text-gray-600">View enrollments and payment history</p>
       </div>
 
+      {/* Summary Stats */}
+      <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-6 rounded-lg border shadow-sm">
+          <div className="flex items-center">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+              <p className="text-2xl font-semibold text-gray-900">
+                {formatAmount(
+                  payments.reduce((sum, p) => sum + (p.status.toLowerCase() === 'success' ? p.amount : 0), 0),
+                  'INR'
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg border shadow-sm">
+          <div className="flex items-center">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Active Enrollments</p>
+              <p className="text-2xl font-semibold text-gray-900">
+                {enrollments.filter(e => e.status === 'ACTIVE').length}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg border shadow-sm">
+          <div className="flex items-center">
+            <div className="p-2 bg-yellow-100 rounded-lg">
+              <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Pending Payments</p>
+              <p className="text-2xl font-semibold text-gray-900">
+                {payments.filter(p => p.status.toLowerCase() === 'pending').length}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Tabs */}
       <div className="mb-6">
         <div className="border-b border-gray-200">
@@ -154,6 +293,16 @@ export default function AdminPaymentsPage() {
               }`}
             >
               Student Enrollments ({enrollments.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('manual-enroll')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'manual-enroll'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Manual Enrollment
             </button>
           </nav>
         </div>
@@ -265,7 +414,23 @@ export default function AdminPaymentsPage() {
                           {formatAmount(enrollment.payment.amount, 'INR')}
                         </div>
                       ) : (
-                        <div className="text-sm text-gray-500">No payment</div>
+                        <div className="text-lg font-semibold text-green-600">
+                          {(() => {
+                            // Try to get price from enrollment.course first
+                            let coursePrice = enrollment.course?.price
+                            
+                            // If not found, look it up from the courses list we already loaded
+                            if (!coursePrice && courses.length > 0) {
+                              const foundCourse = courses.find(c => 
+                                c.id === enrollment.course?.id || 
+                                c.title === enrollment.course?.title
+                              )
+                              coursePrice = foundCourse?.price
+                            }
+                            
+                            return formatAmount(coursePrice, 'INR')
+                          })()}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -276,59 +441,72 @@ export default function AdminPaymentsPage() {
         </div>
       )}
 
-      {/* Summary Stats */}
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-lg border shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-              </svg>
+      {/* Manual Enrollment Tab */}
+      {activeTab === 'manual-enroll' && (
+        <div className="bg-white rounded-lg border shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Enroll Student Manually</h2>
+          <p className="text-sm text-gray-600 mb-6">
+            After receiving payment via GPay, enroll students by entering their email and selecting the course.
+          </p>
+          
+          <form onSubmit={handleManualEnroll} className="space-y-4">
+            <div>
+              <label htmlFor="enroll-email" className="block text-sm font-medium text-gray-700 mb-2">
+                Student Email *
+              </label>
+              <input
+                type="email"
+                id="enroll-email"
+                value={enrollEmail}
+                onChange={(e) => setEnrollEmail(e.target.value)}
+                placeholder="student@example.com"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                required
+              />
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {formatAmount(
-                  payments.reduce((sum, p) => sum + (p.status.toLowerCase() === 'success' ? p.amount : 0), 0),
-                  'INR'
-                )}
-              </p>
+            
+            <div>
+              <label htmlFor="enroll-course" className="block text-sm font-medium text-gray-700 mb-2">
+                Course *
+              </label>
+              <select
+                id="enroll-course"
+                value={enrollCourseId}
+                onChange={(e) => setEnrollCourseId(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                required
+              >
+                <option value="">Select a course</option>
+                {courses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.title}
+                  </option>
+                ))}
+              </select>
             </div>
-          </div>
+            
+            {enrollError && (
+              <div className="bg-red-50 border-l-4 border-red-500 rounded p-3">
+                <p className="text-sm text-red-800">{enrollError}</p>
+              </div>
+            )}
+            
+            {enrollSuccess && (
+              <div className="bg-green-50 border-l-4 border-green-500 rounded p-3">
+                <p className="text-sm text-green-800">{enrollSuccess}</p>
+              </div>
+            )}
+            
+            <button
+              type="submit"
+              disabled={enrolling}
+              className="w-auto mx-auto block rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {enrolling ? 'Enrolling...' : 'Enroll Student'}
+            </button>
+          </form>
         </div>
-
-        <div className="bg-white p-6 rounded-lg border shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Active Enrollments</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {enrollments.filter(e => e.status === 'ACTIVE').length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg border shadow-sm">
-          <div className="flex items-center">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Pending Payments</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {payments.filter(p => p.status.toLowerCase() === 'pending').length}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </main>
   )
 }

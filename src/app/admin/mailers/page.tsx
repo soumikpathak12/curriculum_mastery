@@ -56,7 +56,11 @@ export default function AdminMailersPage() {
       })
       
       if (response.ok) {
-        alert('Mailer sent successfully!')
+        const data = await response.json()
+        const message = data.failed > 0
+          ? `Mailer sent to ${data.successful} recipients (${data.failed} failed)`
+          : `Mailer sent successfully to ${data.successful} recipients!`
+        alert(message)
         setComposeForm({
           title: '',
           content: '',
