@@ -103,6 +103,7 @@ interface Student {
 
 export default function AdminAssignmentsPage() {
   const [activeTab, setActiveTab] = useState<'materials' | 'assignments' | 'quizzes'>('materials')
+  const [assignmentsSubTab, setAssignmentsSubTab] = useState<'submissions' | 'management'>('management')
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [materials, setMaterials] = useState<CourseMaterial[]>([])
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
@@ -116,6 +117,12 @@ export default function AdminAssignmentsPage() {
   const [selectedCourse, setSelectedCourse] = useState<string>('')
   const [coursesLoaded, setCoursesLoaded] = useState(false)
   
+  // Student assignment state
+  const [students, setStudents] = useState<Student[]>([])
+  const [assigningStudents, setAssigningStudents] = useState<{ type: 'assignment' | 'quiz' | null, id: string | null }>({ type: null, id: null })
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([])
+  const [assignmentDueDate, setAssignmentDueDate] = useState('')
+  
   // Materials state
   const [showMaterialForm, setShowMaterialForm] = useState(false)
   const [newMaterial, setNewMaterial] = useState({
@@ -126,6 +133,7 @@ export default function AdminAssignmentsPage() {
   
   // Assignment state
   const [showAssignmentForm, setShowAssignmentForm] = useState(false)
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
   const [savingAssignment, setSavingAssignment] = useState(false)
   const [newAssignment, setNewAssignment] = useState({
     courseId: '',
@@ -147,14 +155,13 @@ export default function AdminAssignmentsPage() {
     questions: [] as any[]
   })
 
-  const loadData = async (tab?: 'materials' | 'assignments' | 'quizzes') => {
+  const loadData = async () => {
     try {
       setLoading(true)
-      const targetTab = tab || activeTab
       
-      // Load courses - only once, needed for all tabs
+      // Load courses - only once, needed for all tabs (using lightweight endpoint)
       if (!coursesLoaded) {
-        const coursesResponse = await fetch('/api/admin/course/tree')
+        const coursesResponse = await fetch('/api/admin/courses')
         if (coursesResponse.ok) {
           const coursesData = await coursesResponse.json()
           const apiCourses: Array<{ id: string; title: string; slug?: string }> = coursesData.courses || []
@@ -176,25 +183,43 @@ export default function AdminAssignmentsPage() {
         }
       }
       
-      // Only load data for the active tab
-      if (targetTab === 'materials') {
-        const materialsResponse = await fetch('/api/admin/course-materials')
-        if (materialsResponse.ok) {
-          const materialsData = await materialsResponse.json()
-          setMaterials(materialsData.materials || [])
-        }
-      } else if (targetTab === 'assignments') {
-        const assignmentsResponse = await fetch('/api/admin/assignments/enhanced')
-        if (assignmentsResponse.ok) {
-          const assignmentsData = await assignmentsResponse.json()
-          setAssignments(assignmentsData.assignments || [])
-        }
-      } else if (targetTab === 'quizzes') {
-        const quizzesResponse = await fetch('/api/admin/quizzes')
-        if (quizzesResponse.ok) {
-          const quizzesData = await quizzesResponse.json()
-          setQuizzes(quizzesData.quizzes || [])
-        }
+      // Load all data in parallel to show counts immediately
+      const [materialsResponse, assignmentsResponse, quizzesResponse, enrollmentsResponse] = await Promise.all([
+        fetch('/api/admin/course-materials'),
+        fetch('/api/admin/assignments/enhanced'),
+        fetch('/api/admin/quizzes'),
+        fetch('/api/admin/enrollments')
+      ])
+      
+      // Load students from enrollments
+      if (enrollmentsResponse.ok) {
+        const enrollmentsData = await enrollmentsResponse.json()
+        const uniqueStudents = new Map<string, Student>()
+        enrollmentsData.enrollments?.forEach((enrollment: any) => {
+          if (enrollment.user && !uniqueStudents.has(enrollment.user.id)) {
+            uniqueStudents.set(enrollment.user.id, {
+              id: enrollment.user.id,
+              name: enrollment.user.name,
+              email: enrollment.user.email
+            })
+          }
+        })
+        setStudents(Array.from(uniqueStudents.values()))
+      }
+      
+      if (materialsResponse.ok) {
+        const materialsData = await materialsResponse.json()
+        setMaterials(materialsData.materials || [])
+      }
+      
+      if (assignmentsResponse.ok) {
+        const assignmentsData = await assignmentsResponse.json()
+        setAssignments(assignmentsData.assignments || [])
+      }
+      
+      if (quizzesResponse.ok) {
+        const quizzesData = await quizzesResponse.json()
+        setQuizzes(quizzesData.quizzes || [])
       }
     } catch (error) {
       console.error('Failed to load data:', error)
@@ -203,11 +228,11 @@ export default function AdminAssignmentsPage() {
     }
   }
 
-  // Load data for the active tab (on mount and when tab changes)
+  // Load all data on mount (to show counts immediately)
   useEffect(() => {
-    loadData(activeTab)
+    loadData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab])
+  }, [])
 
   // Helper function to detect file type from extension
   const getFileTypeFromExtension = (filename: string): 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' => {
@@ -281,6 +306,40 @@ export default function AdminAssignmentsPage() {
   }
 
   // Assignment functions
+  const editAssignment = (assignment: Assignment) => {
+    setEditingAssignment(assignment)
+    setNewAssignment({
+      courseId: assignment.course.id,
+      title: assignment.title,
+      description: assignment.description || '',
+      dueAt: assignment.dueAt ? new Date(assignment.dueAt).toISOString().split('T')[0] : '',
+      files: []
+    })
+    setShowAssignmentForm(true)
+  }
+
+  const deleteAssignment = async (assignmentId: string) => {
+    if (!confirm('Are you sure you want to delete this assignment? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/admin/assignments/${assignmentId}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        await loadData()
+      } else {
+        const data = await response.json()
+        alert(data.error || 'Failed to delete assignment')
+      }
+    } catch (error) {
+      console.error('Failed to delete assignment:', error)
+      alert('Failed to delete assignment')
+    }
+  }
+
   const createAssignment = async () => {
     if (!newAssignment.title || !newAssignment.courseId) {
       alert('Please fill in all required fields')
@@ -296,17 +355,29 @@ export default function AdminAssignmentsPage() {
         description: newAssignment.description,
         dueAt: newAssignment.dueAt ? `${newAssignment.dueAt}T23:59:59` : null
       }
-      const response = await fetch('/api/admin/assignments/enhanced', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(assignmentData)
-      })
+
+      let response
+      if (editingAssignment) {
+        // Update existing assignment
+        response = await fetch(`/api/admin/assignments/${editingAssignment.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(assignmentData)
+        })
+      } else {
+        // Create new assignment
+        response = await fetch('/api/admin/assignments/enhanced', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(assignmentData)
+        })
+      }
       
       if (response.ok) {
         const data = await response.json()
-        const assignmentId = data.assignment.id
+        const assignmentId = editingAssignment ? editingAssignment.id : data.assignment.id
 
-        // Upload files if any
+        // Upload files if any (only for new assignments or when editing)
         if (newAssignment.files.length > 0) {
           for (const file of newAssignment.files) {
             // Get signed URL
@@ -339,18 +410,31 @@ export default function AdminAssignmentsPage() {
         }
 
         setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+        setEditingAssignment(null)
         setShowAssignmentForm(false)
         await loadData()
       } else {
         const data = await response.json()
-        alert(data.error || 'Failed to create assignment')
+        alert(data.error || `Failed to ${editingAssignment ? 'update' : 'create'} assignment`)
       }
     } catch (error) {
-      console.error('Failed to create assignment:', error)
-      alert('Failed to create assignment')
+      console.error(`Failed to ${editingAssignment ? 'update' : 'create'} assignment:`, error)
+      alert(`Failed to ${editingAssignment ? 'update' : 'create'} assignment`)
     } finally {
       setSavingAssignment(false)
     }
+  }
+
+  const openAssignStudentsModal = (type: 'assignment' | 'quiz', id: string) => {
+    setAssigningStudents({ type, id })
+    setSelectedStudentIds([])
+    setAssignmentDueDate('')
+  }
+
+  const closeAssignStudentsModal = () => {
+    setAssigningStudents({ type: null, id: null })
+    setSelectedStudentIds([])
+    setAssignmentDueDate('')
   }
 
   const assignStudentsToAssignment = async (assignmentId: string, studentIds: string[], dueAt?: string) => {
@@ -363,6 +447,7 @@ export default function AdminAssignmentsPage() {
       
       if (response.ok) {
         await loadData()
+        closeAssignStudentsModal()
       } else {
         alert('Failed to assign students')
       }
@@ -420,12 +505,26 @@ export default function AdminAssignmentsPage() {
       
       if (response.ok) {
         await loadData()
+        closeAssignStudentsModal()
       } else {
         alert('Failed to assign students to quiz')
       }
     } catch (error) {
       console.error('Failed to assign students to quiz:', error)
       alert('Failed to assign students to quiz')
+    }
+  }
+
+  const handleAssignStudents = () => {
+    if (!assigningStudents.id || selectedStudentIds.length === 0) {
+      alert('Please select at least one student')
+      return
+    }
+
+    if (assigningStudents.type === 'assignment') {
+      assignStudentsToAssignment(assigningStudents.id, selectedStudentIds, assignmentDueDate || undefined)
+    } else if (assigningStudents.type === 'quiz') {
+      assignStudentsToQuiz(assigningStudents.id, selectedStudentIds, assignmentDueDate || undefined)
     }
   }
 
@@ -638,30 +737,30 @@ export default function AdminAssignmentsPage() {
           <nav className="-mb-px flex space-x-8">
             <button
               onClick={() => setActiveTab('materials')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'materials'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
               }`}
             >
               Course Materials ({materials.length})
             </button>
             <button
               onClick={() => setActiveTab('assignments')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'assignments'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
               }`}
             >
               Assignments ({assignments.length})
             </button>
             <button
               onClick={() => setActiveTab('quizzes')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'quizzes'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
               }`}
             >
               Quizzes ({quizzes.length})
@@ -688,15 +787,19 @@ export default function AdminAssignmentsPage() {
         {activeTab === 'materials' && (
           <button
             onClick={() => setShowMaterialForm(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105"
           >
             Upload Material
           </button>
         )}
-        {activeTab === 'assignments' && (
+        {activeTab === 'assignments' && assignmentsSubTab === 'management' && (
           <button
-            onClick={() => setShowAssignmentForm(true)}
-            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+            onClick={() => {
+              setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+              setEditingAssignment(null)
+              setShowAssignmentForm(true)
+            }}
+            className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105"
           >
             Create Assignment
           </button>
@@ -708,7 +811,7 @@ export default function AdminAssignmentsPage() {
               setNewQuiz({ courseId: '', title: '', description: '', dueAt: '', questions: [] })
               setShowQuizForm(true)
             }}
-            className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+            className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105"
           >
             Create Quiz
           </button>
@@ -759,66 +862,38 @@ export default function AdminAssignmentsPage() {
       {/* Assignments Tab */}
       {activeTab === 'assignments' && (
         <div className="space-y-6">
-          {/* Assignment Submissions */}
-          <div className="bg-white rounded-lg border shadow-sm">
-            <div className="p-6 border-b">
-              <h2 className="text-lg font-semibold text-gray-900">Assignment Submissions</h2>
-            </div>
-            <div className="divide-y">
-              {filteredSubmissions.length === 0 ? (
-                <div className="p-6 text-center text-gray-500">
-                  No submissions found.
-                </div>
-              ) : (
-                filteredSubmissions.map((submission) => (
-                  <div key={submission.id} className="p-6 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-4 mb-2">
-                          <h3 className="font-medium text-gray-900">{submission.assignmentTitle}</h3>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            submission.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
-                            submission.status === 'REVIEWED' ? 'bg-green-100 text-green-800' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {submission.status}
-                          </span>
-                        </div>
-                        <div className="text-sm text-gray-600 mb-2">
-                          <p><strong>Course:</strong> {submission.courseTitle}</p>
-                          <p><strong>Student:</strong> {submission.user.name || submission.user.email}</p>
-                          <p><strong>Submitted:</strong> {new Date(submission.createdAt).toLocaleDateString()}</p>
-                          {submission.feedback && (
-                            <p><strong>Feedback:</strong> {submission.feedback}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => downloadSubmission(submission.id, `${submission.assignmentTitle}_${submission.user.name || submission.user.email}.pdf`)}
-                          className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-                        >
-                          Download
-                        </button>
-                        <button
-                          onClick={() => setSelectedSubmission(submission)}
-                          className="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700"
-                        >
-                          Review
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+          {/* Sub-tabs for Assignments */}
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setAssignmentsSubTab('management')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                  assignmentsSubTab === 'management'
+                    ? 'border-brand-primary text-brand-primary'
+                    : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                }`}
+              >
+                Assignment Management ({assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length})
+              </button>
+              <button
+                onClick={() => setAssignmentsSubTab('submissions')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                  assignmentsSubTab === 'submissions'
+                    ? 'border-brand-primary text-brand-primary'
+                    : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                }`}
+              >
+                Submissions ({filteredSubmissions.length})
+              </button>
+            </nav>
           </div>
 
-          {/* Assignment Management */}
-          <div className="bg-white rounded-lg border shadow-sm">
-            <div className="p-6 border-b">
-              <h2 className="text-lg font-semibold text-gray-900">Assignment Management</h2>
-            </div>
+          {/* Assignment Management Sub-tab */}
+          {assignmentsSubTab === 'management' && (
+            <div className="bg-white rounded-lg border shadow-sm">
+              <div className="p-6 border-b">
+                <h2 className="text-lg font-semibold text-gray-900">Assignment Management</h2>
+              </div>
             <div className="divide-y">
               {assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length === 0 ? (
                 <div className="p-6 text-center text-gray-500">
@@ -857,87 +932,248 @@ export default function AdminAssignmentsPage() {
                           <p className="mt-1"><strong>Submissions:</strong> {assignment.submissions.length}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2"></div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Quizzes Tab */}
-      {activeTab === 'quizzes' && (
-        <div>
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900">Quizzes</h2>
-          </div>
-          <div>
-            {quizzes.filter(q => !selectedCourse || q.course.id === selectedCourse).length === 0 ? (
-              <div className="text-center text-gray-500 py-12">
-                No quizzes found.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {quizzes.filter(q => !selectedCourse || q.course.id === selectedCourse).map((quiz) => (
-                  <div key={quiz.id} className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow bg-white">
-                    <div className="flex flex-col h-full">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-lg text-gray-900 mb-2">{quiz.title}</h3>
-                        <div className="space-y-2 text-sm text-gray-600 mb-4">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-gray-700">Course:</span>
-                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">
-                              {quiz.course.title}
-                            </span>
-                          </div>
-                          {quiz.description && (
-                            <p className="text-gray-600 line-clamp-2">{quiz.description}</p>
-                          )}
-                          <div className="flex items-center gap-4 flex-wrap">
-                            <div className="flex items-center gap-1">
-                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                              </svg>
-                              <span className="text-xs">
-                                {quiz.dueAt ? new Date(quiz.dueAt).toLocaleDateString() : 'No due date'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              <span className="text-xs">{quiz.questions.length} questions</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
-                              <span className="text-xs">{quiz.submissions.length} submissions</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 pt-4 border-t border-gray-100 mt-auto">
+                      <div className="flex items-center gap-2">
                         <button
-                          onClick={() => editQuiz(quiz)}
-                          className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition-colors"
+                          onClick={() => openAssignStudentsModal('assignment', assignment.id)}
+                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                        >
+                          Assign Students
+                        </button>
+                        <button
+                          onClick={() => editAssignment(assignment)}
+                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
                         >
                           Edit
                         </button>
                         <button
-                          onClick={() => deleteQuiz(quiz.id)}
-                          className="px-3 py-1.5 bg-red-600 text-white rounded text-xs font-medium hover:bg-red-700 transition-colors"
+                          onClick={() => deleteAssignment(assignment.id)}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
                         >
                           Delete
                         </button>
                       </div>
                     </div>
                   </div>
-                ))}
+                ))
+              )}
+            </div>
+          </div>
+          )}
+
+          {/* Assignment Submissions Sub-tab */}
+          {assignmentsSubTab === 'submissions' && (
+            <>
+              {/* Status Filter for Submissions */}
+              <div className="mb-4 flex gap-4 items-center">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-gray-700">Filter by status:</label>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value as 'ALL' | 'SUBMITTED' | 'REVIEWED' | 'REVISE')}
+                    className="rounded-md border border-gray-300 px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                  >
+                    <option value="ALL">All Submissions</option>
+                    <option value="SUBMITTED">Submitted</option>
+                    <option value="REVIEWED">Reviewed</option>
+                    <option value="REVISE">Revise</option>
+                  </select>
+                </div>
+                <div className="text-sm text-gray-600">
+                  Showing {filteredSubmissions.length} submission{filteredSubmissions.length !== 1 ? 's' : ''}
+                </div>
               </div>
-            )}
+
+              <div className="bg-white rounded-lg border shadow-sm">
+                <div className="p-6 border-b">
+                  <h2 className="text-lg font-semibold text-gray-900">Assignment Submissions</h2>
+                </div>
+                <div className="divide-y">
+              {filteredSubmissions.length === 0 ? (
+                <div className="p-6 text-center text-gray-500">
+                  No submissions found.
+                </div>
+              ) : (
+                filteredSubmissions.map((submission) => (
+                  <div key={submission.id} className="p-6 hover:bg-gray-50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-4 mb-2">
+                          <h3 className="font-medium text-gray-900">{submission.assignmentTitle}</h3>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            submission.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
+                            submission.status === 'REVIEWED' ? 'bg-green-100 text-green-800' :
+                            'bg-red-100 text-red-800'
+                          }`}>
+                            {submission.status}
+                          </span>
+                        </div>
+                        <div className="text-sm text-gray-600 mb-2">
+                          <p><strong>Course:</strong> {submission.courseTitle}</p>
+                          <p><strong>Student:</strong> {submission.user.name || submission.user.email}</p>
+                          <p><strong>Submitted:</strong> {new Date(submission.createdAt).toLocaleDateString()}</p>
+                          {submission.feedback && (
+                            <p><strong>Feedback:</strong> {submission.feedback}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => downloadSubmission(submission.id, `${submission.assignmentTitle}_${submission.user.name || submission.user.email}.pdf`)}
+                          className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                        >
+                          Download
+                        </button>
+                        <button
+                          onClick={() => setSelectedSubmission(submission)}
+                          className="px-3 py-1 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                        >
+                          Review
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Assignment Management Sub-tab */}
+          {assignmentsSubTab === 'management' && (
+            <div className="bg-white rounded-lg border shadow-sm">
+              <div className="p-6 border-b">
+                <h2 className="text-lg font-semibold text-gray-900">Assignment Management</h2>
+              </div>
+            <div className="divide-y">
+              {assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length === 0 ? (
+                <div className="p-6 text-center text-gray-500">
+                  No assignments found.
+                </div>
+              ) : (
+                assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).map((assignment) => (
+                  <div key={assignment.id} className="p-6 hover:bg-gray-50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-medium text-gray-900">{assignment.title}</h3>
+                        <div className="text-sm text-gray-600 mt-1">
+                          <p><strong>Course:</strong> {assignment.course.title}</p>
+                          <p><strong>Description:</strong> {assignment.description || 'No description'}</p>
+                          <p><strong>Due Date:</strong> {assignment.dueAt ? new Date(assignment.dueAt).toLocaleDateString() : 'No due date'}</p>
+                          {assignment.resources && assignment.resources.length > 0 && (
+                            <div className="mt-2">
+                              <p className="font-medium text-gray-700 mb-1">Resources:</p>
+                              <div className="flex flex-wrap gap-2">
+                                {assignment.resources.map((resource) => (
+                                  <button
+                                    key={resource.id}
+                                    onClick={() => downloadAssignmentResource(resource.id, resource.filename)}
+                                    className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
+                                  >
+                                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                    <span className="text-gray-700 hover:text-blue-600">{resource.filename}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* Assigned Students removed */}
+                          <p className="mt-1"><strong>Submissions:</strong> {assignment.submissions.length}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => openAssignStudentsModal('assignment', assignment.id)}
+                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                        >
+                          Assign Students
+                        </button>
+                        <button
+                          onClick={() => editAssignment(assignment)}
+                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteAssignment(assignment.id)}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          )}
+        </div>
+      )}
+
+      {/* Quizzes Tab */}
+      {activeTab === 'quizzes' && (
+        <div>
+          <div className="bg-white rounded-lg border shadow-sm">
+            <div className="p-6 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Quiz Management</h2>
+              <button
+                onClick={() => {
+                  setNewQuiz({ courseId: '', title: '', description: '', dueAt: '', questions: [] })
+                  setEditingQuiz(null)
+                  setShowQuizForm(true)
+                }}
+                className="rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg transition-all hover:scale-105"
+              >
+                Create Quiz
+              </button>
+            </div>
+            <div className="divide-y">
+              {quizzes.filter(q => !selectedCourse || q.course.id === selectedCourse).length === 0 ? (
+                <div className="p-6 text-center text-gray-500">
+                  No quizzes found.
+                </div>
+              ) : (
+                quizzes.filter(q => !selectedCourse || q.course.id === selectedCourse).map((quiz) => (
+                  <div key={quiz.id} className="p-6 hover:bg-gray-50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-medium text-gray-900">{quiz.title}</h3>
+                        <div className="text-sm text-gray-600 mt-1">
+                          <p><strong>Course:</strong> {quiz.course.title}</p>
+                          <p><strong>Description:</strong> {quiz.description || 'No description'}</p>
+                          <p><strong>Due Date:</strong> {quiz.dueAt ? new Date(quiz.dueAt).toLocaleDateString() : 'No due date'}</p>
+                          <p className="mt-1"><strong>Questions:</strong> {quiz.questions.length}</p>
+                          <p className="mt-1"><strong>Submissions:</strong> {quiz.submissions.length}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => openAssignStudentsModal('quiz', quiz.id)}
+                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                        >
+                          Assign Students
+                        </button>
+                        <button
+                          onClick={() => editQuiz(quiz)}
+                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteQuiz(quiz.id)}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -956,7 +1192,7 @@ export default function AdminAssignmentsPage() {
                   <select
                     value={newMaterial.courseId}
                     onChange={(e) => setNewMaterial(prev => ({ ...prev, courseId: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   >
                     <option value="">Select a course</option>
                     {courses.map(course => (
@@ -970,7 +1206,7 @@ export default function AdminAssignmentsPage() {
                     type="text"
                     value={newMaterial.title}
                     onChange={(e) => setNewMaterial(prev => ({ ...prev, title: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                     placeholder="Enter material title"
                   />
                 </div>
@@ -980,14 +1216,14 @@ export default function AdminAssignmentsPage() {
                     type="file"
                     accept=".pdf,.doc,.docx,.ppt,.pptx"
                     onChange={(e) => setNewMaterial(prev => ({ ...prev, file: e.target.files?.[0] || null }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   />
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
                 <button
                   onClick={uploadMaterial}
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105"
                 >
                   Upload
                 </button>
@@ -1003,17 +1239,20 @@ export default function AdminAssignmentsPage() {
         </div>
       )}
 
-      {/* Assignment Creation Modal */}
+      {/* Assignment Creation/Edit Modal */}
       {showAssignmentForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex items-center justify-between relative">
-              <h3 className="text-lg font-semibold text-gray-900">Create Assignment</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                {editingAssignment ? 'Edit Assignment' : 'Create Assignment'}
+              </h3>
               <button
                 onClick={() => {
                   if (savingAssignment) return
                   setShowAssignmentForm(false)
                   setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+                  setEditingAssignment(null)
                 }}
                 disabled={savingAssignment}
                 className="absolute right-4 top-6 text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-1 hover:bg-gray-100 rounded"
@@ -1031,7 +1270,7 @@ export default function AdminAssignmentsPage() {
                   <select
                     value={newAssignment.courseId}
                     onChange={(e) => setNewAssignment(prev => ({ ...prev, courseId: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   >
                     <option value="">Select a course</option>
                     {courses.map(course => (
@@ -1045,7 +1284,7 @@ export default function AdminAssignmentsPage() {
                     type="text"
                     value={newAssignment.title}
                     onChange={(e) => setNewAssignment(prev => ({ ...prev, title: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                     placeholder="Enter assignment title"
                   />
                 </div>
@@ -1054,7 +1293,7 @@ export default function AdminAssignmentsPage() {
                   <textarea
                     value={newAssignment.description}
                     onChange={(e) => setNewAssignment(prev => ({ ...prev, description: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                     placeholder="Enter assignment description"
                     rows={3}
                   />
@@ -1065,7 +1304,7 @@ export default function AdminAssignmentsPage() {
                     type="date"
                     value={newAssignment.dueAt}
                     onChange={(e) => setNewAssignment(prev => ({ ...prev, dueAt: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   />
                 </div>
                 <div>
@@ -1078,7 +1317,7 @@ export default function AdminAssignmentsPage() {
                       const files = Array.from(e.target.files || [])
                       setNewAssignment(prev => ({ ...prev, files: [...prev.files, ...files] }))
                     }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   />
                   {newAssignment.files.length > 0 && (
                     <div className="mt-2 space-y-1">
@@ -1109,7 +1348,7 @@ export default function AdminAssignmentsPage() {
                 <button
                   onClick={createAssignment}
                   disabled={savingAssignment}
-                  className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
                 >
                   {savingAssignment && (
                     <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1117,13 +1356,16 @@ export default function AdminAssignmentsPage() {
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                   )}
-                  {savingAssignment ? 'Creating...' : 'Create Assignment'}
+                  {savingAssignment 
+                    ? (editingAssignment ? 'Updating...' : 'Creating...') 
+                    : (editingAssignment ? 'Update Assignment' : 'Create Assignment')}
                 </button>
                 <button
                   onClick={() => {
                     if (savingAssignment) return
                     setShowAssignmentForm(false)
                     setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+                    setEditingAssignment(null)
                   }}
                   disabled={savingAssignment}
                   className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1167,7 +1409,7 @@ export default function AdminAssignmentsPage() {
                   <select
                     value={newQuiz.courseId}
                     onChange={(e) => setNewQuiz(prev => ({ ...prev, courseId: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   >
                     <option value="">Select a course</option>
                     {courses.map(course => (
@@ -1181,7 +1423,7 @@ export default function AdminAssignmentsPage() {
                     type="text"
                     value={newQuiz.title}
                     onChange={(e) => setNewQuiz(prev => ({ ...prev, title: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                     placeholder="Enter quiz title"
                   />
                 </div>
@@ -1190,7 +1432,7 @@ export default function AdminAssignmentsPage() {
                   <textarea
                     value={newQuiz.description}
                     onChange={(e) => setNewQuiz(prev => ({ ...prev, description: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                     placeholder="Enter quiz description"
                     rows={3}
                   />
@@ -1201,7 +1443,7 @@ export default function AdminAssignmentsPage() {
                     type="date"
                     value={newQuiz.dueAt}
                     onChange={(e) => setNewQuiz(prev => ({ ...prev, dueAt: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   />
                 </div>
                 
@@ -1211,7 +1453,7 @@ export default function AdminAssignmentsPage() {
                     <label className="block text-sm font-medium text-gray-700">Questions</label>
                     <button
                       onClick={addQuizQuestion}
-                      className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                      className="px-3 py-1 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
                     >
                       Add Question
                     </button>
@@ -1234,7 +1476,7 @@ export default function AdminAssignmentsPage() {
                             <select
                               value={question.type}
                               onChange={(e) => updateQuizQuestion(index, 'type', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                             >
                               <option value="MCQ">Multiple Choice</option>
                               <option value="FILL_IN_BLANK">Fill in the Blank</option>
@@ -1246,7 +1488,7 @@ export default function AdminAssignmentsPage() {
                               type="text"
                               value={question.question}
                               onChange={(e) => updateQuizQuestion(index, 'question', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                               placeholder="Enter question"
                             />
                           </div>
@@ -1272,7 +1514,7 @@ export default function AdminAssignmentsPage() {
                                 <select
                                   value={question.correctAnswer || ''}
                                   onChange={(e) => updateQuizQuestion(index, 'correctAnswer', e.target.value)}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                                 >
                                   <option value="">Select correct answer</option>
                                   {question.options.map((option, optIndex) => (
@@ -1289,7 +1531,7 @@ export default function AdminAssignmentsPage() {
                                 type="text"
                                 value={question.correctAnswer || ''}
                                 onChange={(e) => updateQuizQuestion(index, 'correctAnswer', e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                                 placeholder="Enter correct answer (comma-separated for multiple answers)"
                               />
                             </div>
@@ -1306,7 +1548,7 @@ export default function AdminAssignmentsPage() {
                 <button
                   onClick={editingQuiz ? updateQuiz : createQuiz}
                   disabled={savingQuiz}
-                  className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
                 >
                   {savingQuiz && (
                     <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1376,6 +1618,90 @@ export default function AdminAssignmentsPage() {
                     setSelectedSubmission(null)
                     setFeedback('')
                   }}
+                  className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Students Modal */}
+      {assigningStudents.type && assigningStudents.id && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Assign Students to {assigningStudents.type === 'assignment' ? 'Assignment' : 'Quiz'}
+              </h3>
+            </div>
+            <div className="p-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Due Date (Optional)
+                  </label>
+                  <input
+                    type="date"
+                    value={assignmentDueDate}
+                    onChange={(e) => setAssignmentDueDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Select Students
+                  </label>
+                  <div className="border border-gray-300 rounded-md max-h-64 overflow-y-auto">
+                    {students.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500">No students found</div>
+                    ) : (
+                      <div className="divide-y">
+                        {students.map((student) => (
+                          <label
+                            key={student.id}
+                            className="flex items-center p-3 hover:bg-gray-50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.includes(student.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedStudentIds([...selectedStudentIds, student.id])
+                                } else {
+                                  setSelectedStudentIds(selectedStudentIds.filter(id => id !== student.id))
+                                }
+                              }}
+                              className="w-4 h-4 text-brand-primary border-gray-300 rounded focus:ring-brand-primary"
+                            />
+                            <span className="ml-3 text-sm text-gray-900">
+                              {student.name || student.email}
+                              {student.name && <span className="text-gray-500 ml-1">({student.email})</span>}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {students.length > 0 && (
+                    <p className="mt-2 text-sm text-gray-600">
+                      {selectedStudentIds.length} of {students.length} students selected
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleAssignStudents}
+                  disabled={selectedStudentIds.length === 0}
+                  className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Assign Students
+                </button>
+                <button
+                  onClick={closeAssignStudentsModal}
                   className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
                 >
                   Cancel

@@ -2,28 +2,6 @@
 
 import { useState, useEffect } from 'react'
 
-interface Payment {
-  id: string
-  orderId: string
-  amount: number
-  currency: string
-  status: string
-  provider: string
-  createdAt: string
-  user: {
-    id: string
-    name: string | null
-    email: string
-  }
-  enrollment: Array<{
-    id: string
-    status: string
-    course: {
-      title: string
-    }
-  }>
-}
-
 interface Enrollment {
   id: string
   status: string
@@ -42,7 +20,6 @@ interface Enrollment {
     id: string
     orderId: string
     amount: number
-    status: string
     provider: string
   } | null
 }
@@ -55,12 +32,13 @@ interface Course {
 }
 
 export default function AdminPaymentsPage() {
-  const [payments, setPayments] = useState<Payment[]>([])
   const [enrollments, setEnrollments] = useState<Enrollment[]>([])
   const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'payments' | 'enrollments' | 'manual-enroll'>('payments')
-  const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'CANCELLED'>('ALL')
+  const [activeTab, setActiveTab] = useState<'enrollments' | 'manual-enroll'>('enrollments')
+  const [selectedCourseId, setSelectedCourseId] = useState<string>('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 15
   
   // Manual enrollment form state
   const [enrollEmail, setEnrollEmail] = useState('')
@@ -72,39 +50,19 @@ export default function AdminPaymentsPage() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [paymentsRes, enrollmentsRes, coursesRes] = await Promise.all([
-        fetch('/api/admin/payments'),
+      const [enrollmentsRes, coursesRes] = await Promise.all([
         fetch('/api/admin/enrollments'),
-        fetch('/api/admin/course/tree')
+        fetch('/api/admin/courses')
       ])
-      
-      if (paymentsRes.ok) {
-        const paymentsData = await paymentsRes.json()
-        setPayments(paymentsData.payments)
-      }
       
       if (enrollmentsRes.ok) {
         const enrollmentsData = await enrollmentsRes.json()
-        // Debug: Check if price is in the data
-        if (enrollmentsData.enrollments?.length > 0) {
-          console.log('Enrollment sample:', enrollmentsData.enrollments[0])
-        }
-        setEnrollments(enrollmentsData.enrollments)
+        setEnrollments(enrollmentsData.enrollments || [])
       }
       
       if (coursesRes.ok) {
         const coursesData = await coursesRes.json()
-        // Flatten the course tree to get all courses
-        const allCourses: Course[] = []
-        coursesData.courses?.forEach((course: any) => {
-          allCourses.push({
-            id: course.id,
-            title: course.title,
-            slug: course.slug,
-            price: course.price
-          })
-        })
-        setCourses(allCourses)
+        setCourses(coursesData.courses || [])
       }
     } catch (error) {
       console.error('Failed to load data:', error)
@@ -158,9 +116,21 @@ export default function AdminPaymentsPage() {
     loadData()
   }, [])
 
-  const filteredEnrollments = enrollments.filter(enrollment => 
-    filterStatus === 'ALL' || enrollment.status === filterStatus
-  )
+  const filteredEnrollments = enrollments.filter(enrollment => {
+    if (!selectedCourseId) return true
+    return enrollment.course.id === selectedCourseId || enrollment.course.title === selectedCourseId
+  })
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredEnrollments.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedEnrollments = filteredEnrollments.slice(startIndex, endIndex)
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedCourseId])
 
   const formatAmount = (amount: number | null | undefined, currency: string) => {
     if (amount == null || amount === undefined) {
@@ -213,7 +183,7 @@ export default function AdminPaymentsPage() {
     <main className="mx-auto max-w-6xl p-6">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Payment Management</h1>
-        <p className="mt-2 text-gray-600">View enrollments and payment history</p>
+        <p className="mt-2 text-gray-600">View student enrollments and payment history</p>
       </div>
 
       {/* Summary Stats */}
@@ -222,14 +192,20 @@ export default function AdminPaymentsPage() {
           <div className="flex items-center">
             <div className="p-2 bg-green-100 rounded-lg">
               <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M7 21h10" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 13h10" />
               </svg>
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Revenue</p>
               <p className="text-2xl font-semibold text-gray-900">
                 {formatAmount(
-                  payments.reduce((sum, p) => sum + (p.status.toLowerCase() === 'success' ? p.amount : 0), 0),
+                  enrollments.reduce((sum, e) => {
+                    if (e.payment && e.payment.amount) {
+                      return sum + e.payment.amount
+                    }
+                    return sum
+                  }, 0),
                   'INR'
                 )}
               </p>
@@ -255,15 +231,15 @@ export default function AdminPaymentsPage() {
 
         <div className="bg-white p-6 rounded-lg border shadow-sm">
           <div className="flex items-center">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Pending Payments</p>
+              <p className="text-sm font-medium text-gray-600">Total Enrollments</p>
               <p className="text-2xl font-semibold text-gray-900">
-                {payments.filter(p => p.status.toLowerCase() === 'pending').length}
+                {enrollments.length}
               </p>
             </div>
           </div>
@@ -275,31 +251,21 @@ export default function AdminPaymentsPage() {
         <div className="border-b border-gray-200">
           <nav className="-mb-px flex space-x-8">
             <button
-              onClick={() => setActiveTab('payments')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'payments'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              Payment History ({payments.length})
-            </button>
-            <button
               onClick={() => setActiveTab('enrollments')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'enrollments'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
               }`}
             >
               Student Enrollments ({enrollments.length})
             </button>
             <button
               onClick={() => setActiveTab('manual-enroll')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'manual-enroll'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
               }`}
             >
               Manual Enrollment
@@ -312,16 +278,18 @@ export default function AdminPaymentsPage() {
       {activeTab === 'enrollments' && (
         <div className="mb-6 flex gap-4">
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700">Filter by status:</label>
+            <label className="text-sm font-medium text-gray-700">Filter by course:</label>
             <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as any)}
-              className="rounded-md border border-gray-300 px-3 py-1 text-sm"
+              value={selectedCourseId}
+              onChange={(e) => setSelectedCourseId(e.target.value)}
+              className="rounded-md border border-gray-300 px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary"
             >
-              <option value="ALL">All Enrollments</option>
-              <option value="ACTIVE">Active</option>
-              <option value="PENDING">Pending</option>
-              <option value="CANCELLED">Cancelled</option>
+              <option value="">All Courses</option>
+              {courses.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.title}
+                </option>
+              ))}
             </select>
           </div>
           <div className="text-sm text-gray-600">
@@ -330,64 +298,19 @@ export default function AdminPaymentsPage() {
         </div>
       )}
 
-      {/* Payments Tab */}
-      {activeTab === 'payments' && (
-        <div className="bg-white rounded-lg border shadow-sm">
-          <div className="p-6 border-b">
-            <h2 className="text-lg font-semibold text-gray-900">Payment History</h2>
-          </div>
-          <div className="divide-y">
-            {payments.length === 0 ? (
-              <div className="p-6 text-center text-gray-500">
-                No payments found.
-              </div>
-            ) : (
-              payments.map((payment) => (
-                <div key={payment.id} className="p-6 hover:bg-gray-50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-4 mb-2">
-                        <h3 className="font-medium text-gray-900">Order #{payment.orderId}</h3>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(payment.status)}`}>
-                          {payment.status}
-                        </span>
-                        <span className="text-sm text-gray-500">{payment.provider}</span>
-                      </div>
-                      <div className="text-sm text-gray-600 mb-2">
-                        <p><strong>Student:</strong> {payment.user.name || payment.user.email}</p>
-                        <p><strong>Amount:</strong> {formatAmount(payment.amount, payment.currency)}</p>
-                        <p><strong>Date:</strong> {new Date(payment.createdAt).toLocaleDateString()}</p>
-                        {payment.enrollment.length > 0 && (
-                          <p><strong>Course:</strong> {payment.enrollment[0].course.title}</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-lg font-semibold text-gray-900">
-                        {formatAmount(payment.amount, payment.currency)}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Enrollments Tab */}
       {activeTab === 'enrollments' && (
         <div className="bg-white rounded-lg border shadow-sm">
           <div className="p-6 border-b">
-            <h2 className="text-lg font-semibold text-gray-900">Student Enrollments</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Student Enrollments & Payment History</h2>
           </div>
           <div className="divide-y">
             {filteredEnrollments.length === 0 ? (
               <div className="p-6 text-center text-gray-500">
-                No enrollments found for the selected filter.
+                {selectedCourseId ? 'No enrollments found for the selected course.' : 'No enrollments found.'}
               </div>
             ) : (
-              filteredEnrollments.map((enrollment) => (
+              paginatedEnrollments.map((enrollment) => (
                 <div key={enrollment.id} className="p-6 hover:bg-gray-50">
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
@@ -401,10 +324,7 @@ export default function AdminPaymentsPage() {
                         <p><strong>Student:</strong> {enrollment.user.name || enrollment.user.email}</p>
                         <p><strong>Enrolled:</strong> {new Date(enrollment.createdAt).toLocaleDateString()}</p>
                         {enrollment.payment && (
-                          <>
-                            <p><strong>Payment:</strong> {formatAmount(enrollment.payment.amount, 'INR')}</p>
-                            <p><strong>Payment Status:</strong> {enrollment.payment.status}</p>
-                          </>
+                          <p><strong>Payment:</strong> {formatAmount(enrollment.payment.amount, 'INR')}</p>
                         )}
                       </div>
                     </div>
@@ -438,6 +358,98 @@ export default function AdminPaymentsPage() {
               ))
             )}
           </div>
+
+          {/* Pagination Controls */}
+          {filteredEnrollments.length > 0 && (
+            <div className="p-6 border-t flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="text-sm text-gray-600">
+                Showing {startIndex + 1} to {Math.min(endIndex, filteredEnrollments.length)} of {filteredEnrollments.length} enrollment{filteredEnrollments.length !== 1 ? 's' : ''}
+                {totalPages > 1 && ` (Page ${currentPage} of ${totalPages})`}
+              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Previous
+                  </button>
+                  
+                  {/* Page Numbers */}
+                  <div className="flex items-center gap-1">
+                    {(() => {
+                      const pages: (number | string)[] = []
+                      
+                      if (totalPages <= 7) {
+                        // Show all pages if 7 or fewer
+                        for (let i = 1; i <= totalPages; i++) {
+                          pages.push(i)
+                        }
+                      } else {
+                        // Always show first page
+                        pages.push(1)
+                        
+                        if (currentPage <= 4) {
+                          // Show first 5 pages, then ellipsis, then last
+                          for (let i = 2; i <= 5; i++) {
+                            pages.push(i)
+                          }
+                          pages.push('...')
+                          pages.push(totalPages)
+                        } else if (currentPage >= totalPages - 3) {
+                          // Show first, ellipsis, then last 5 pages
+                          pages.push('...')
+                          for (let i = totalPages - 4; i <= totalPages; i++) {
+                            pages.push(i)
+                          }
+                        } else {
+                          // Show first, ellipsis, current-1, current, current+1, ellipsis, last
+                          pages.push('...')
+                          pages.push(currentPage - 1)
+                          pages.push(currentPage)
+                          pages.push(currentPage + 1)
+                          pages.push('...')
+                          pages.push(totalPages)
+                        }
+                      }
+                      
+                      return pages.map((page, index) => {
+                        if (page === '...') {
+                          return (
+                            <span key={`ellipsis-${index}`} className="px-2 text-gray-500">
+                              ...
+                            </span>
+                          )
+                        }
+                        return (
+                          <button
+                            key={page}
+                            onClick={() => setCurrentPage(page as number)}
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                              currentPage === page
+                                ? 'bg-brand-primary text-white'
+                                : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        )
+                      })
+                    })()}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -500,7 +512,7 @@ export default function AdminPaymentsPage() {
             <button
               type="submit"
               disabled={enrolling}
-              className="w-auto mx-auto block rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-auto mx-auto block rounded-lg bg-brand-primary px-6 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg transition-all hover:scale-105 focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
               {enrolling ? 'Enrolling...' : 'Enroll Student'}
             </button>

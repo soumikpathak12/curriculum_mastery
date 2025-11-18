@@ -20,7 +20,7 @@ export default function AdminHeader() {
       </div>
       <div className="flex items-center gap-3 text-sm">
         <span className="rounded border px-2 py-1">Role: {role}</span>
-        <button onClick={() => signOut()} className="rounded bg-black px-3 py-1.5 text-white">Sign out</button>
+        <button onClick={() => signOut()} className="rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg transition-all hover:scale-105">Sign out</button>
       </div>
     </div>
   )

@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       include: {
         user: { select: { id: true, name: true, email: true } },
         course: { select: { id: true, title: true, price: true } },
-        payment: { select: { id: true, orderId: true, amount: true, status: true, provider: true } }
+        payment: { select: { id: true, orderId: true, amount: true, provider: true } }
       },
       orderBy: { createdAt: 'desc' }
     })

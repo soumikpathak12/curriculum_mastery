@@ -9,34 +9,34 @@ datasource db {
 }
 
 model User {
-  id             String           @id @default(cuid())
-  email          String           @unique
-  passwordHash   String
-  name           String?
-  role           Role             @default(STUDENT)
-  blocked        Boolean          @default(false)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  enrollments    Enrollment[]
-  LessonProgress LessonProgress[]
-  payments       Payment[]
-  submissions    Submission[]
+  id              String           @id @default(cuid())
+  email           String           @unique
+  passwordHash    String
+  name            String?
+  role            Role             @default(STUDENT)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  blocked         Boolean          @default(false)
+  enrollments     Enrollment[]
+  LessonProgress  LessonProgress[]
+  payments        Payment[]
   quizSubmissions QuizSubmission[]
+  submissions     Submission[]
 }
 
 model Course {
-  id          String       @id @default(cuid())
+  id          String           @id @default(cuid())
   title       String
-  slug        String       @unique
+  slug        String           @unique
   description String?
   price       Int
-  currency    String       @default("INR")
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  currency    String           @default("INR")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
   assignments Assignment[]
+  materials   CourseMaterial[]
   enrollments Enrollment[]
   modules     Module[]
-  materials   CourseMaterial[]
   quizzes     Quiz[]
 }
 
@@ -101,7 +101,6 @@ model Payment {
   orderId    String       @unique
   amount     Int
   currency   String       @default("INR")
-  status     String
   userId     String
   createdAt  DateTime     @default(now())
   enrollment Enrollment[]
@@ -111,16 +110,16 @@ model Payment {
 }
 
 model Assignment {
-  id          String       @id @default(cuid())
+  id          String               @id @default(cuid())
   courseId    String
   title       String
   description String?
   dueAt       DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  course      Course       @relation(fields: [courseId], references: [id])
-  submissions Submission[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  course      Course               @relation(fields: [courseId], references: [id])
   resources   AssignmentResource[]
+  submissions Submission[]
 
   @@index([courseId])
 }
@@ -172,6 +171,14 @@ model NewsletterSubscriber {
   createdAt    DateTime @default(now())
 }
 
+model ContactSubmission {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  message   String
+  createdAt DateTime @default(now())
+}
+
 model Newsletter {
   id        String           @id @default(cuid())
   title     String
@@ -193,6 +200,69 @@ model LessonProgress {
   @@unique([userId, lessonId])
   @@index([userId])
   @@index([lessonId])
+}
+
+/// Course materials (PDF, Word, PPT files)
+model CourseMaterial {
+  id        String       @id @default(cuid())
+  courseId  String
+  title     String
+  type      ResourceType
+  fileKey   String
+  filename  String
+  size      Int
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  course    Course       @relation(fields: [courseId], references: [id])
+
+  @@index([courseId])
+}
+
+/// Quiz system
+model Quiz {
+  id          String           @id @default(cuid())
+  courseId    String
+  title       String
+  description String?
+  dueAt       DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  course      Course           @relation(fields: [courseId], references: [id])
+  questions   QuizQuestion[]
+  submissions QuizSubmission[]
+
+  @@index([courseId])
+}
+
+/// Quiz questions (MCQ and Fill in the blanks)
+model QuizQuestion {
+  id            String       @id @default(cuid())
+  quizId        String
+  type          QuestionType
+  question      String
+  options       String[]
+  correctAnswer String?
+  order         Int
+  createdAt     DateTime     @default(now())
+  quiz          Quiz         @relation(fields: [quizId], references: [id])
+
+  @@index([quizId])
+}
+
+/// Quiz submissions
+model QuizSubmission {
+  id          String   @id @default(cuid())
+  quizId      String
+  userId      String
+  answers     Json
+  score       Int?
+  submittedAt DateTime @default(now())
+  quiz        Quiz     @relation(fields: [quizId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@unique([quizId, userId])
+  @@index([quizId])
+  @@index([userId])
 }
 
 enum Role {
@@ -225,70 +295,7 @@ enum NewsletterStatus {
   SENT
 }
 
-/// Course materials (PDF, Word, PPT files)
-model CourseMaterial {
-  id        String       @id @default(cuid())
-  courseId  String
-  title     String
-  type      ResourceType
-  fileKey   String
-  filename  String
-  size      Int
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  course    Course       @relation(fields: [courseId], references: [id])
-
-  @@index([courseId])
-}
-
-/// Quiz system
-model Quiz {
-  id          String   @id @default(cuid())
-  courseId    String
-  title       String
-  description String?
-  dueAt       DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  course      Course       @relation(fields: [courseId], references: [id])
-  questions   QuizQuestion[]
-  submissions QuizSubmission[]
-
-  @@index([courseId])
-}
-
-/// Quiz questions (MCQ and Fill in the blanks)
-model QuizQuestion {
-  id        String      @id @default(cuid())
-  quizId    String
-  type      QuestionType
-  question  String
-  options   String[]
-  correctAnswer String?
-  order     Int
-  createdAt DateTime    @default(now())
-  quiz      Quiz        @relation(fields: [quizId], references: [id])
-
-  @@index([quizId])
-}
-
 enum QuestionType {
   MCQ
   FILL_IN_BLANK
-}
-
-/// Quiz submissions
-model QuizSubmission {
-  id           String   @id @default(cuid())
-  quizId       String
-  userId       String
-  answers      Json
-  score        Int?
-  submittedAt  DateTime @default(now())
-  quiz         Quiz     @relation(fields: [quizId], references: [id])
-  user         User     @relation(fields: [userId], references: [id])
-
-  @@unique([quizId, userId])
-  @@index([quizId])
-  @@index([userId])
 }

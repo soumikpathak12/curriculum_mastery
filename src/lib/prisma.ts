@@ -5,9 +5,9 @@ const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefi
 // In development, clear cache if models are missing to force fresh client
 if (process.env.NODE_ENV !== 'production' && globalForPrisma.prisma) {
   const cachedClient = globalForPrisma.prisma as any
-  if (!cachedClient.quiz || !cachedClient.courseMaterial) {
+  if (!cachedClient.quiz || !cachedClient.courseMaterial || !cachedClient.contactSubmission) {
     // Old cached client missing new models, disconnect and clear
-    cachedClient.$disconnect().catch(() => {})
+    cachedClient.$disconnect().catch(() => { })
     globalForPrisma.prisma = undefined
   }
 }

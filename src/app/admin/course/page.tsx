@@ -229,7 +229,7 @@ export default function AdminCoursePage() {
                 onChange={(e) => setNewModuleTitle(e.target.value)}
                 className="w-full max-w-sm rounded-md border px-3 py-2"
               />
-              <button onClick={createModule} className="rounded-md bg-black px-3 py-2 text-white">Add Module</button>
+              <button onClick={createModule} className="rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg transition-all hover:scale-105">Add Module</button>
             </div>
           </div>
 
@@ -246,7 +246,7 @@ export default function AdminCoursePage() {
                           onChange={(e) => setEditingModule(prev => ({ ...prev, [m.id]: e.target.value }))}
                           className="rounded border px-2 py-1"
                         />
-                        <button onClick={() => updateModuleTitle(m.id)} className="rounded bg-black px-2 py-1 text-white text-xs">Save</button>
+                        <button onClick={() => updateModuleTitle(m.id)} className="rounded-lg bg-brand-primary px-3 py-1 text-xs font-medium text-white shadow-sm hover:shadow-md transition-all">Save</button>
                       </>
                     ) : (
                       <>
@@ -274,7 +274,7 @@ export default function AdminCoursePage() {
                                 onChange={(e) => setEditingLesson(prev => ({ ...prev, [l.id]: e.target.value }))}
                                 className="rounded border px-2 py-1 text-sm"
                               />
-                              <button onClick={() => updateLessonTitle(l.id)} className="rounded bg-black px-2 py-1 text-white text-xs">Save</button>
+                              <button onClick={() => updateLessonTitle(l.id)} className="rounded-lg bg-brand-primary px-3 py-1 text-xs font-medium text-white shadow-sm hover:shadow-md transition-all">Save</button>
                             </>
                           ) : (
                             <>
@@ -330,7 +330,7 @@ export default function AdminCoursePage() {
                               onChange={(e) => setNewRes(prev => ({ ...prev, [l.id]: { filename: prev[l.id]?.filename || '', type: prev[l.id]?.type || 'PDF', size: Number(e.target.value || 0) } }))}
                               className="w-40 rounded border px-2 py-1"
                             />
-                            <button onClick={() => addResource(l.id)} className="rounded bg-black px-3 py-1 text-white">Add resource</button>
+                            <button onClick={() => addResource(l.id)} className="rounded-lg bg-brand-primary px-3 py-1 text-sm font-medium text-white shadow-sm hover:shadow-md transition-all hover:scale-105">Add resource</button>
                           </div>
                         </div>
                       )}
@@ -345,7 +345,7 @@ export default function AdminCoursePage() {
                     onChange={(e) => setLessonTitles(prev => ({ ...prev, [m.id]: e.target.value }))}
                     className="w-full max-w-sm rounded-md border px-3 py-2"
                   />
-                  <button onClick={() => createLesson(m.id)} className="rounded-md bg-black px-3 py-2 text-white">Add Lesson</button>
+                  <button onClick={() => createLesson(m.id)} className="rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg transition-all hover:scale-105">Add Lesson</button>
                 </div>
               </div>
             ))}
