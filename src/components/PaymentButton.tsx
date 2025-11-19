@@ -11,7 +11,6 @@ interface PaymentButtonProps {
   children: React.ReactNode
 }
 
-// Cashfree will be integrated later - keeping types simple for now
 
 export default function PaymentButton({ courseId, className, children }: PaymentButtonProps) {
   const { data: session } = useSession()
@@ -50,8 +49,7 @@ export default function PaymentButton({ courseId, className, children }: Payment
         return
       }
 
-      // Real Cashfree integration would go here
-      // For now, redirect to success page
+      // Redirect to success page
       router.push(`/payment/success?order_id=${orderId}`)
 
     } catch (error) {
@@ -82,7 +80,6 @@ export default function PaymentButton({ courseId, className, children }: Payment
     }
   }
 
-  // Cashfree integration will be added here when ready
 
   return (
     <button

@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -17,8 +17,9 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    const { id } = await params
     const quiz = await prisma.quiz.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         course: { select: { id: true, title: true } },
         questions: {
@@ -45,7 +46,7 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -57,6 +58,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    const { id } = await params
     const body = await req.json()
     const { courseId, title, description, dueAt, questions } = body
 
@@ -89,7 +91,7 @@ export async function PATCH(
 
     // Get existing quiz
     const existingQuiz = await prisma.quiz.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: { questions: true }
     })
 
@@ -100,7 +102,7 @@ export async function PATCH(
     // Delete existing questions if new ones provided
     if (questions && Array.isArray(questions)) {
       await prisma.quizQuestion.deleteMany({
-        where: { quizId: params.id }
+        where: { quizId: id }
       })
     }
 
@@ -112,7 +114,7 @@ export async function PATCH(
     if (course && course.id) updateData.courseId = course.id
 
     const quiz = await prisma.quiz.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         ...updateData,
         ...(questions && Array.isArray(questions) ? {
@@ -147,7 +149,7 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -159,9 +161,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    const { id } = await params
     // Delete quiz (cascade will handle questions and submissions)
     await prisma.quiz.delete({
-      where: { id: params.id }
+      where: { id }
     })
 
     return NextResponse.json({ message: 'Quiz deleted successfully' })

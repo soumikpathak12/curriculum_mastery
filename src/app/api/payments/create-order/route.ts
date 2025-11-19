@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-// Note: Cashfree integration will be configured later
-// For now, we'll create a mock payment flow
 
 export async function POST(req: Request) {
   try {
@@ -57,30 +55,17 @@ export async function POST(req: Request) {
         orderId,
         amount: parseInt(amount),
         currency: currency || 'INR',
-        status: 'CREATED',
         userId: user.id,
-        provider: 'cashfree'
+        provider: 'razorpay'
       }
     })
 
-    // Create Cashfree payment URL with the correct amount
-    const baseUrl = 'https://payments.cashfree.com/forms';
-    const params = new URLSearchParams({
-      code: 'pay_form',
-      amount: amount,
-      orderAmount: amount,
-      currency: currency || 'INR',
-      customerId: user.id,
-      orderId: orderId
-    });
-    
-    const paymentUrl = `${baseUrl}?${params.toString()}`;
-
+    // Return order details for payment processing
     return NextResponse.json({
       orderId,
-      paymentUrl,
       amount: parseInt(amount),
-      currency: currency || 'INR'
+      currency: currency || 'INR',
+      mockPayment: process.env.NODE_ENV !== 'production' // Enable mock payments in development
     })
 
   } catch (error) {

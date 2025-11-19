@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
         if (!customEmails) {
           return NextResponse.json({ error: 'Custom emails are required' }, { status: 400 })
         }
-        recipients = customEmails.split(',').map(email => email.trim()).filter(email => email)
+        recipients = customEmails.split(',').map((email: string) => email.trim()).filter((email: string) => email)
         break
       
       default:

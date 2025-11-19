@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -17,6 +17,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    const { id } = await params
     const { status, feedback } = await req.json()
 
     if (!status || !['REVIEWED', 'REVISE'].includes(status)) {
@@ -24,7 +25,7 @@ export async function PATCH(
     }
 
     const submission = await prisma.submission.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         status,
         feedback: feedback || null,

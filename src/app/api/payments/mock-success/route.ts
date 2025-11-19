@@ -33,11 +33,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Course not found' }, { status: 404 })
     }
 
-    // Update payment status to PAID
-    const payment = await prisma.payment.update({
-      where: { orderId },
-      data: { status: 'PAID' }
+    // Get payment record
+    const payment = await prisma.payment.findUnique({
+      where: { orderId }
     })
+
+    if (!payment) {
+      return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
+    }
 
     // Check if enrollment already exists
     const existingEnrollment = await prisma.enrollment.findUnique({
@@ -71,7 +74,6 @@ export async function POST(req: Request) {
       enrollment,
       payment: {
         orderId: payment.orderId,
-        status: payment.status,
         amount: payment.amount
       }
     })

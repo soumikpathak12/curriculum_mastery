@@ -86,10 +86,6 @@ export async function DELETE(
     const { id } = await params
     
     // Delete related records first (cascade delete should handle this, but being explicit)
-    await prisma.studentAssignment.deleteMany({
-      where: { assignmentId: id }
-    })
-    
     await prisma.assignmentResource.deleteMany({
       where: { assignmentId: id }
     })

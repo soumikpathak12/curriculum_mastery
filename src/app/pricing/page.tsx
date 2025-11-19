@@ -2,16 +2,10 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useState, useEffect } from "react";
 import Header from "@/components/Header";
-import CashfreePayButton from "@/components/CashfreePayButton";
+import PaymentButton from "@/components/PaymentButton";
 
 export default function PricingPage() {
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
   const courses = [
     {
       id: 'igcse-basic',
@@ -20,7 +14,6 @@ export default function PricingPage() {
       duration: '4 Hours',
       dates: '1st Nov onwards',
       description: 'This course introduces aspiring teachers to the fundamentals of the IGCSE Music curriculum, covering key concepts in music theory, listening, and performance.',
-      cashfreeLink: 'https://payments.cashfree.com/forms?code=basic_form'
     },
     {
       id: 'igcse-advanced',
@@ -29,7 +22,6 @@ export default function PricingPage() {
       duration: '4 Hours',
       dates: '1st Nov onwards',
       description: 'This advanced course is designed for teachers aiming to deepen their expertise in the IGCSE Music curriculum.',
-      cashfreeLink: 'https://payments.cashfree.com/forms?code=advance_form'
     },
     {
       id: 'ib-comprehensive',
@@ -38,7 +30,6 @@ export default function PricingPage() {
       duration: '6 Hours',
       dates: '1st Nov onwards',
       description: 'This comprehensive course is designed for aspiring IB Music teachers seeking to develop a deep understanding of the curriculum.',
-      cashfreeLink: 'https://payments.cashfree.com/forms?code=comprehensive_form'
     },
     {
       id: 'ib-igcse-educators',
@@ -47,7 +38,6 @@ export default function PricingPage() {
       duration: '12 Hours',
       dates: '1st Nov - 19th Nov',
       description: 'This integrated course combines the IGCSE and IB Music teacher training programs.',
-      cashfreeLink: 'https://payments.cashfree.com/forms?code=pay_form'
     }
   ];
 
@@ -95,18 +85,13 @@ export default function PricingPage() {
 
               {/* CTA Button - Always at bottom */}
               <div className="p-6 mt-auto">
-                {!isMounted ? (
-                  <div className="w-full bg-gray-200 h-12 rounded-lg animate-pulse"></div>
-                ) : (
-                  <CashfreePayButton
-                    courseId={course.id}
-                    courseTitle={course.title}
-                    amount={course.price.replace(/[₹,]/g, '').replace(/\s+/g, '').trim()}
-                    className="cursor-pointer w-full bg-brand-primary text-white py-3 px-6 rounded-lg font-semibold hover:bg-brand-secondary transition-colors"
-                  >
-                    Enroll Now
-                  </CashfreePayButton>
-                )}
+                <PaymentButton
+                  courseId={course.id}
+                  amount={parseInt(course.price.replace(/[₹,]/g, '').replace(/\s+/g, '').trim())}
+                  className="cursor-pointer w-full bg-brand-primary text-white py-3 px-6 rounded-lg font-semibold hover:bg-brand-secondary transition-colors"
+                >
+                  Enroll Now
+                </PaymentButton>
               </div>
             </div>
           ))}

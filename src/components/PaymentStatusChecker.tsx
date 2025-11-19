@@ -8,7 +8,7 @@ export default function PaymentStatusChecker() {
   const [checked, setChecked] = useState(false)
 
   useEffect(() => {
-    // Check if we have order_id in URL params (from Cashfree redirect)
+    // Check if we have order_id in URL params (from payment redirect)
     const urlParams = new URLSearchParams(window.location.search)
     const orderId = urlParams.get('order_id')
 

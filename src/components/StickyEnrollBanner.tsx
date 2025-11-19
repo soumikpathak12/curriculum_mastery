@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useSession } from 'next-auth/react'
 import { useState, useEffect } from 'react'
-import CashfreePayButton from '@/components/CashfreePayButton'
+import PaymentButton from '@/components/PaymentButton'
 
 interface Course {
   id?: string;
@@ -114,37 +114,14 @@ export default function StickyEnrollBanner({ course }: StickyEnrollBannerProps) 
             Go to Dashboard
           </Link>
         ) : (
-          <CashfreePayButton
+          <PaymentButton
             courseId={currentCourse.id || 'ib-igcse-educators'}
-            courseTitle={currentCourse.title}
-            amount={getAmount(currentCourse.price)}
+            amount={parseInt(getAmount(currentCourse.price))}
             className="block w-full text-center rounded-lg px-6 py-3 text-lg font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:scale-105 bg-brand-primary cursor-pointer"
           >
             Enroll Now
-          </CashfreePayButton>
+          </PaymentButton>
         )}
-        {/* Commented out: Cashfree form routing - now uses CashfreePayButton for direct course enrollment
-        <Link 
-          href={session ? "/dashboard" : (() => {
-            // Determine the form code based on course ID
-            let formCode = 'pay_form'; // Default for Music Educators Course
-            
-            if (course?.id === 'igcse-basic') {
-              formCode = 'basic_form';
-            } else if (course?.id === 'igcse-advanced') {
-              formCode = 'advance_form';
-            } else if (course?.id === 'ib-comprehensive') {
-              formCode = 'comprehensive_form';
-            }
-            // For 'ib-igcse-educators', keep the default 'pay_form'
-            
-            return `https://payments.cashfree.com/forms?code=${formCode}`;
-          })()}
-          className="block w-full text-center rounded-lg px-6 py-3 text-lg font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:scale-105 bg-brand-primary"
-        >
-          {session ? "Go to Dashboard" : "Enroll Now"}
-        </Link>
-        */}
 
         {/* Additional Info */}
         <p className="text-xs text-gray-500 text-center mt-3">

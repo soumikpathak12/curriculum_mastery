@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,30 +13,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const body = await req.json()
-    const { quizId, studentIds, dueAt } = body
-
-    if (!quizId || !studentIds || !Array.isArray(studentIds)) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
-    }
-
-    // Remove existing assignments for this quiz
-    await prisma.quizStudentAssignment.deleteMany({
-      where: { quizId }
-    })
-
-    // Create new assignments
-    const studentAssignments = await prisma.quizStudentAssignment.createMany({
-      data: studentIds.map((userId: string) => ({
-        quizId,
-        userId,
-        dueAt: dueAt ? new Date(dueAt) : null
-      }))
-    })
-
+    // Per-student quiz assignment feature is disabled
+    // All enrolled students can access quizzes
     return NextResponse.json({ 
-      message: 'Students assigned successfully',
-      count: studentAssignments.count 
+      message: 'Per-student quiz assignment is disabled. All enrolled students can access quizzes.',
+      note: 'This feature has been disabled. Quizzes are accessible to all students enrolled in the course.'
     })
   } catch (error) {
     console.error('Failed to assign students to quiz:', error)

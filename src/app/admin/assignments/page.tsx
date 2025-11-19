@@ -1495,7 +1495,7 @@ export default function AdminAssignmentsPage() {
                           {question.type === 'MCQ' && (
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-1">Options</label>
-                              {question.options.map((option, optIndex) => (
+                              {question.options.map((option: string, optIndex: number) => (
                                 <input
                                   key={optIndex}
                                   type="text"
@@ -1517,7 +1517,7 @@ export default function AdminAssignmentsPage() {
                                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                                 >
                                   <option value="">Select correct answer</option>
-                                  {question.options.map((option, optIndex) => (
+                                  {question.options.map((option: string, optIndex: number) => (
                                     <option key={optIndex} value={option}>{option}</option>
                                   ))}
                                 </select>
@@ -1583,7 +1583,7 @@ export default function AdminAssignmentsPage() {
             <div className="p-6 border-b">
               <h3 className="text-lg font-semibold text-gray-900">Review Submission</h3>
               <p className="text-sm text-gray-600 mt-1">
-                {selectedSubmission.assignmentTitle} - {selectedSubmission.user.name || selectedSubmission.user.email}
+                {selectedSubmission.assignment.title} - {selectedSubmission.user.name || selectedSubmission.user.email}
               </p>
             </div>
             <div className="p-6">

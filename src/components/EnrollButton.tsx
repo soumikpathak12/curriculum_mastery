@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { useState } from 'react'
-import CashfreePayButton from '@/components/CashfreePayButton'
+import PaymentButton from '@/components/PaymentButton'
 
 export default function EnrollButton() {
   const router = useRouter()
@@ -25,13 +25,12 @@ export default function EnrollButton() {
       </button>
       {showPayment && (
         <div className="mt-4">
-          <CashfreePayButton 
+          <PaymentButton 
             courseId="default-course"
-            courseTitle="Default Course"
-            amount="15000"
+            amount={15000}
           >
             Pay Now
-          </CashfreePayButton>
+          </PaymentButton>
         </div>
       )}
     </>
