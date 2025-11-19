@@ -20,16 +20,25 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null
-        const user = await prisma.user.findUnique({ where: { email: credentials.email } })
-        if (!user) return null
-        // Check if user is blocked
-        if (user.blocked) {
-          throw new Error('Your account has been blocked. Please contact support.')
+        try {
+          if (!credentials?.email || !credentials?.password) return null
+          const user = await prisma.user.findUnique({ where: { email: credentials.email } })
+          if (!user) return null
+          // Check if user is blocked
+          if (user.blocked) {
+            throw new Error('Your account has been blocked. Please contact support.')
+          }
+          const valid = await bcrypt.compare(credentials.password, user.passwordHash)
+          if (!valid) return null
+          return { id: user.id, email: user.email, name: user.name, role: user.role as Role }
+        } catch (error) {
+          console.error('Authorization error:', error)
+          // Return null for invalid credentials, but log other errors
+          if (error instanceof Error && error.message.includes('blocked')) {
+            throw error
+          }
+          return null
         }
-        const valid = await bcrypt.compare(credentials.password, user.passwordHash)
-        if (!valid) return null
-        return { id: user.id, email: user.email, name: user.name, role: user.role as Role }
       },
     }),
   ],

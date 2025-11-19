@@ -160,7 +160,17 @@ export async function GET(req: NextRequest) {
     })
   } catch (error) {
     console.error('Failed to fetch dashboard data:', error)
-    return NextResponse.json({ error: 'Failed to fetch dashboard data' }, { status: 500 })
+    // Ensure we always return JSON, even if there's an error
+    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch dashboard data'
+    return NextResponse.json({ 
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? String(error) : undefined
+    }, { 
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
   }
 }
 
