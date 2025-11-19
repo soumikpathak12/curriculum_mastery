@@ -88,7 +88,12 @@ export async function GET(req: NextRequest) {
       enrolledCourseIds.length > 0
         ? prisma.assignment.findMany({
             where: {
-              courseId: { in: enrolledCourseIds }
+              courseId: { in: enrolledCourseIds },
+              studentAssignments: {
+                some: {
+                  userId: user.id
+                }
+              }
             },
             include: {
               course: {
@@ -105,7 +110,12 @@ export async function GET(req: NextRequest) {
       enrolledCourseIds.length > 0
         ? prisma.quiz.findMany({
             where: {
-              courseId: { in: enrolledCourseIds }
+              courseId: { in: enrolledCourseIds },
+              studentAssignments: {
+                some: {
+                  userId: user.id
+                }
+              }
             },
             include: {
               course: {

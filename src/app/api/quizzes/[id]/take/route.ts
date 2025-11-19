@@ -65,6 +65,23 @@ export async function GET(
       )
     }
 
+    // Check if quiz is assigned to this user
+    const quizAssignment = await prisma.studentQuizAssignment.findUnique({
+      where: {
+        userId_quizId: {
+          userId: user.id,
+          quizId: id
+        }
+      }
+    })
+
+    if (!quizAssignment) {
+      return NextResponse.json(
+        { error: 'This quiz has not been assigned to you' },
+        { status: 403 }
+      )
+    }
+
     // Check if already submitted
     if (quiz.submissions.length > 0) {
       return NextResponse.json(

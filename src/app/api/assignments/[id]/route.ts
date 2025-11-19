@@ -56,6 +56,20 @@ export async function GET(
       return NextResponse.json({ error: 'You are not enrolled in this course' }, { status: 403 })
     }
 
+    // Check if assignment is assigned to this user
+    const assignmentAssignment = await prisma.studentAssignment.findUnique({
+      where: {
+        userId_assignmentId: {
+          userId: user.id,
+          assignmentId: id
+        }
+      }
+    })
+
+    if (!assignmentAssignment) {
+      return NextResponse.json({ error: 'This assignment has not been assigned to you' }, { status: 403 })
+    }
+
     return NextResponse.json({ assignment })
   } catch (error) {
     console.error('Failed to fetch assignment:', error)

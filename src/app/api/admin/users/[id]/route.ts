@@ -41,7 +41,33 @@ export async function DELETE(
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    // Delete user (cascade will handle related records)
+    // Delete all related records first (in correct order to avoid foreign key constraints)
+    // 1. Delete lesson progress
+    await prisma.lessonProgress.deleteMany({
+      where: { userId: id }
+    })
+
+    // 2. Delete quiz submissions
+    await prisma.quizSubmission.deleteMany({
+      where: { userId: id }
+    })
+
+    // 3. Delete assignment submissions
+    await prisma.submission.deleteMany({
+      where: { userId: id }
+    })
+
+    // 4. Delete enrollments
+    await prisma.enrollment.deleteMany({
+      where: { userId: id }
+    })
+
+    // 5. Delete payments (if any exist without enrollments)
+    await prisma.payment.deleteMany({
+      where: { userId: id }
+    })
+
+    // 6. Finally delete the user
     await prisma.user.delete({
       where: { id },
     })

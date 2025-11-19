@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,11 +14,43 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Per-student quiz assignment feature is disabled
-    // All enrolled students can access quizzes
+    const { quizId, studentIds } = await req.json()
+
+    if (!quizId || !Array.isArray(studentIds)) {
+      return NextResponse.json({ error: 'Invalid request. quizId and studentIds array required.' }, { status: 400 })
+    }
+
+    // Verify quiz exists
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: quizId }
+    })
+
+    if (!quiz) {
+      return NextResponse.json({ error: 'Quiz not found' }, { status: 404 })
+    }
+
+    // Assign students to quiz
+    const assignments = await Promise.all(
+      studentIds.map((userId: string) =>
+        prisma.studentQuizAssignment.upsert({
+          where: {
+            userId_quizId: {
+              userId,
+              quizId
+            }
+          },
+          create: {
+            userId,
+            quizId
+          },
+          update: {}
+        })
+      )
+    )
+
     return NextResponse.json({ 
-      message: 'Per-student quiz assignment is disabled. All enrolled students can access quizzes.',
-      note: 'This feature has been disabled. Quizzes are accessible to all students enrolled in the course.'
+      message: `Successfully assigned ${assignments.length} student(s) to quiz`,
+      assignments
     })
   } catch (error) {
     console.error('Failed to assign students to quiz:', error)

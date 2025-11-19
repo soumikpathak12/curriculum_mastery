@@ -51,6 +51,20 @@ export async function GET(
       return NextResponse.json({ error: 'You are not enrolled in this course' }, { status: 403 })
     }
 
+    // Check if assignment is assigned to this user
+    const assignmentAssignment = await prisma.studentAssignment.findUnique({
+      where: {
+        userId_assignmentId: {
+          userId: user.id,
+          assignmentId: id
+        }
+      }
+    })
+
+    if (!assignmentAssignment) {
+      return NextResponse.json({ error: 'This assignment has not been assigned to you' }, { status: 403 })
+    }
+
     // Mock download URL - replace with actual S3/R2 signed URL in production
     const downloadUrl = `https://example-storage.local/${resource.fileKey}?signature=mock`
 
