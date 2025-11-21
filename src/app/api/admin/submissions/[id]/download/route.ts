@@ -30,16 +30,32 @@ export async function GET(
       return NextResponse.json({ error: 'Submission not found' }, { status: 404 })
     }
 
-    // For now, return a mock file download
-    // In production, you would fetch the actual file from your storage service
-    const mockFileContent = `Assignment Submission\n\nStudent: ${submission.user.name || submission.user.email}\nAssignment: ${submission.assignment.title}\nSubmitted: ${submission.createdAt}\nStatus: ${submission.status}\n\nThis is a mock file. In production, this would be the actual submitted file.`
+    if (!submission.fileKey) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 })
+    }
 
-    return new NextResponse(mockFileContent, {
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="submission_${id}.txt"`
+    // Check if fileKey contains base64 data (stored directly in database)
+    if (submission.fileKey.startsWith('data:')) {
+      // Extract base64 data
+      const base64Match = submission.fileKey.match(/^data:([^;]+);base64,(.+)$/)
+      if (base64Match) {
+        const [, contentType, base64Data] = base64Match
+        const buffer = Buffer.from(base64Data, 'base64')
+        
+        const filename = `${submission.assignment.title}_${submission.user.name || submission.user.email}.${contentType.includes('pdf') ? 'pdf' : 'txt'}`
+        
+        return new NextResponse(buffer, {
+          headers: {
+            'Content-Type': contentType || 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
+            'Content-Length': buffer.length.toString(),
+          }
+        })
       }
-    })
+    }
+
+    // Fallback for legacy file keys
+    return NextResponse.json({ error: 'File format not supported' }, { status: 400 })
   } catch (error) {
     console.error('Failed to download submission:', error)
     return NextResponse.json({ error: 'Failed to download submission' }, { status: 500 })

@@ -65,13 +65,11 @@ export async function GET(
       return NextResponse.json({ error: 'This assignment has not been assigned to you' }, { status: 403 })
     }
 
-    // Mock download URL - replace with actual S3/R2 signed URL in production
-    const downloadUrl = `https://example-storage.local/${resource.fileKey}?signature=mock`
-
+    // Return download endpoint that serves the file
+    const downloadUrl = `/api/assignments/${id}/resources/${resourceId}/download-file`
     return NextResponse.json({ 
       downloadUrl,
-      filename: resource.filename,
-      fileKey: resource.fileKey
+      filename: resource.filename
     })
   } catch (error) {
     console.error('Failed to get download URL:', error)

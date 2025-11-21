@@ -119,12 +119,13 @@ export default function AdminAssignmentsPage() {
   
   // Student assignment state
   const [students, setStudents] = useState<Student[]>([])
-  const [assigningStudents, setAssigningStudents] = useState<{ type: 'assignment' | 'quiz' | null, id: string | null }>({ type: null, id: null })
+  const [assigningStudents, setAssigningStudents] = useState<{ type: 'assignment' | 'quiz' | 'material' | null, id: string | null }>({ type: null, id: null })
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([])
   const [assignmentDueDate, setAssignmentDueDate] = useState('')
   
   // Materials state
   const [showMaterialForm, setShowMaterialForm] = useState(false)
+  const [editingMaterial, setEditingMaterial] = useState<CourseMaterial | null>(null)
   const [newMaterial, setNewMaterial] = useState({
     courseId: '',
     title: '',
@@ -135,6 +136,8 @@ export default function AdminAssignmentsPage() {
   const [showAssignmentForm, setShowAssignmentForm] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
   const [savingAssignment, setSavingAssignment] = useState(false)
+  const [existingResources, setExistingResources] = useState<AssignmentResource[]>([])
+  const [deletingResourceId, setDeletingResourceId] = useState<string | null>(null)
   const [newAssignment, setNewAssignment] = useState({
     courseId: '',
     title: '',
@@ -254,50 +257,98 @@ export default function AdminAssignmentsPage() {
   }
 
   // Material functions
-  const uploadMaterial = async () => {
-    if (!newMaterial.file || !newMaterial.title || !newMaterial.courseId) {
-      alert('Please fill in all required fields')
+  const editMaterial = (material: CourseMaterial) => {
+    setEditingMaterial(material)
+    setNewMaterial({
+      courseId: material.course.id,
+      title: material.title,
+      file: null
+    })
+    setShowMaterialForm(true)
+  }
+
+  const deleteMaterial = async (materialId: string) => {
+    if (!confirm('Are you sure you want to delete this course material? This action cannot be undone and the file will be permanently deleted.')) {
       return
     }
 
     try {
-      // Get signed URL
-      const signResponse = await fetch('/api/admin/course-materials/sign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: newMaterial.file.name })
-      })
-      
-      if (!signResponse.ok) {
-        alert('Failed to get upload URL')
-        return
-      }
-      
-      const { fileKey } = await signResponse.json()
-      
-      // Auto-detect file type from extension
-      const fileType = getFileTypeFromExtension(newMaterial.file.name)
-      
-      // Create material record
-      const response = await fetch('/api/admin/course-materials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          courseId: newMaterial.courseId,
-          title: newMaterial.title,
-          type: fileType,
-          fileKey,
-          filename: newMaterial.file.name,
-          size: newMaterial.file.size
-        })
+      const response = await fetch(`/api/admin/course-materials/${materialId}`, {
+        method: 'DELETE'
       })
       
       if (response.ok) {
-        setNewMaterial({ courseId: '', title: '', file: null })
-        setShowMaterialForm(false)
         await loadData()
       } else {
-        alert('Failed to upload material')
+        const data = await response.json()
+        alert(data.error || 'Failed to delete material')
+      }
+    } catch (error) {
+      console.error('Failed to delete material:', error)
+      alert('Failed to delete material')
+    }
+  }
+
+  const uploadMaterial = async () => {
+    if (!newMaterial.title || !newMaterial.courseId) {
+      alert('Please fill in all required fields')
+      return
+    }
+
+    // For editing, file is optional
+    if (!editingMaterial && !newMaterial.file) {
+      alert('Please select a file')
+      return
+    }
+
+    try {
+      if (editingMaterial) {
+        // Update existing material
+        const formData = new FormData()
+        formData.append('title', newMaterial.title)
+        formData.append('courseId', newMaterial.courseId)
+        if (newMaterial.file) {
+          formData.append('file', newMaterial.file)
+        }
+
+        const response = await fetch(`/api/admin/course-materials/${editingMaterial.id}`, {
+          method: 'PUT',
+          body: formData
+        })
+        
+        if (response.ok) {
+          setNewMaterial({ courseId: '', title: '', file: null })
+          setEditingMaterial(null)
+          setShowMaterialForm(false)
+          await loadData()
+        } else {
+          const data = await response.json()
+          alert(data.error || 'Failed to update material')
+        }
+      } else {
+        // Create new material
+        if (!newMaterial.file) {
+          alert('Please select a file')
+          return
+        }
+
+        const formData = new FormData()
+        formData.append('file', newMaterial.file)
+        formData.append('title', newMaterial.title)
+        
+        const response = await fetch(`/api/admin/course-materials`, {
+          method: 'POST',
+          body: formData
+        })
+        
+        if (response.ok) {
+          setNewMaterial({ courseId: '', title: '', file: null })
+          setShowMaterialForm(false)
+          await loadData()
+        } else {
+          const data = await response.json()
+          alert(data.error || 'Failed to upload material')
+        }
       }
     } catch (error) {
       console.error('Failed to upload material:', error)
@@ -308,6 +359,7 @@ export default function AdminAssignmentsPage() {
   // Assignment functions
   const editAssignment = (assignment: Assignment) => {
     setEditingAssignment(assignment)
+    setExistingResources(assignment.resources || [])
     setNewAssignment({
       courseId: assignment.course.id,
       title: assignment.title,
@@ -316,6 +368,42 @@ export default function AdminAssignmentsPage() {
       files: []
     })
     setShowAssignmentForm(true)
+  }
+
+  const deleteResource = async (resourceId: string) => {
+    if (!confirm('Are you sure you want to delete this resource? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      setDeletingResourceId(resourceId)
+      const response = await fetch(`/api/admin/assignments/resources/${resourceId}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        // Remove from existing resources (no need to reload entire page)
+        setExistingResources(prev => prev.filter(r => r.id !== resourceId))
+        // Also update the assignment in the assignments list if it's loaded
+        setAssignments(prev => prev.map(assignment => {
+          if (assignment.id === editingAssignment?.id) {
+            return {
+              ...assignment,
+              resources: assignment.resources?.filter(r => r.id !== resourceId) || []
+            }
+          }
+          return assignment
+        }))
+      } else {
+        const data = await response.json()
+        alert(data.error || 'Failed to delete resource')
+      }
+    } catch (error) {
+      console.error('Failed to delete resource:', error)
+      alert('Failed to delete resource')
+    } finally {
+      setDeletingResourceId(null)
+    }
   }
 
   const deleteAssignment = async (assignmentId: string) => {
@@ -380,31 +468,19 @@ export default function AdminAssignmentsPage() {
         // Upload files if any (only for new assignments or when editing)
         if (newAssignment.files.length > 0) {
           for (const file of newAssignment.files) {
-            // Get signed URL
-            const signResponse = await fetch('/api/admin/assignments/resources/sign', {
+            // Upload file directly to API route (works with Netlify serverless)
+            const formData = new FormData()
+            formData.append('file', file)
+            formData.append('title', file.name)
+            
+            const uploadResponse = await fetch(`/api/admin/assignments/${assignmentId}/resources`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ filename: file.name })
+              body: formData
             })
             
-            if (signResponse.ok) {
-              const { fileKey } = await signResponse.json()
-              
-              // Auto-detect file type from extension
-              const fileType = getFileTypeFromExtension(file.name)
-              
-              // Create resource record
-              await fetch(`/api/admin/assignments/${assignmentId}/resources`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  title: file.name,
-                  type: fileType,
-                  fileKey,
-                  filename: file.name,
-                  size: file.size
-                })
-              })
+            if (!uploadResponse.ok) {
+              const error = await uploadResponse.json()
+              alert(`Failed to upload ${file.name}: ${error.error || 'Unknown error'}`)
             }
           }
         }
@@ -425,7 +501,7 @@ export default function AdminAssignmentsPage() {
     }
   }
 
-  const openAssignStudentsModal = (type: 'assignment' | 'quiz', id: string) => {
+  const openAssignStudentsModal = (type: 'assignment' | 'quiz' | 'material', id: string) => {
     setAssigningStudents({ type, id })
     setSelectedStudentIds([])
     setAssignmentDueDate('')
@@ -515,6 +591,26 @@ export default function AdminAssignmentsPage() {
     }
   }
 
+  const assignStudentsToMaterial = async (materialId: string, studentIds: string[]) => {
+    try {
+      const response = await fetch('/api/admin/course-materials/assign-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ materialId, studentIds })
+      })
+      
+      if (response.ok) {
+        await loadData()
+        closeAssignStudentsModal()
+      } else {
+        alert('Failed to assign students to material')
+      }
+    } catch (error) {
+      console.error('Failed to assign students to material:', error)
+      alert('Failed to assign students to material')
+    }
+  }
+
   const handleAssignStudents = () => {
     if (!assigningStudents.id || selectedStudentIds.length === 0) {
       alert('Please select at least one student')
@@ -525,6 +621,8 @@ export default function AdminAssignmentsPage() {
       assignStudentsToAssignment(assigningStudents.id, selectedStudentIds, assignmentDueDate || undefined)
     } else if (assigningStudents.type === 'quiz') {
       assignStudentsToQuiz(assigningStudents.id, selectedStudentIds, assignmentDueDate || undefined)
+    } else if (assigningStudents.type === 'material') {
+      assignStudentsToMaterial(assigningStudents.id, selectedStudentIds)
     }
   }
 
@@ -845,10 +943,22 @@ export default function AdminAssignmentsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => {/* Download functionality */}}
-                        className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                        onClick={() => openAssignStudentsModal('material', material.id)}
+                        className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
                       >
-                        Download
+                        Assign Students
+                      </button>
+                      <button
+                        onClick={() => editMaterial(material)}
+                        className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteMaterial(material.id)}
+                        className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                      >
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -1183,7 +1293,9 @@ export default function AdminAssignmentsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b">
-              <h3 className="text-lg font-semibold text-gray-900">Upload Course Material</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                {editingMaterial ? 'Edit Course Material' : 'Upload Course Material'}
+              </h3>
             </div>
             <div className="p-6">
               <div className="space-y-4">
@@ -1211,13 +1323,20 @@ export default function AdminAssignmentsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">File</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    File {editingMaterial && '(Leave empty to keep existing file)'}
+                  </label>
                   <input
                     type="file"
                     accept=".pdf,.doc,.docx,.ppt,.pptx"
                     onChange={(e) => setNewMaterial(prev => ({ ...prev, file: e.target.files?.[0] || null }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   />
+                  {editingMaterial && (
+                    <p className="mt-1 text-sm text-gray-500">
+                      Current file: {editingMaterial.filename} ({(editingMaterial.size / 1024 / 1024).toFixed(2)} MB)
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
@@ -1225,10 +1344,14 @@ export default function AdminAssignmentsPage() {
                   onClick={uploadMaterial}
                   className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105"
                 >
-                  Upload
+                  {editingMaterial ? 'Update' : 'Upload'}
                 </button>
                 <button
-                  onClick={() => setShowMaterialForm(false)}
+                  onClick={() => {
+                    setShowMaterialForm(false)
+                    setNewMaterial({ courseId: '', title: '', file: null })
+                    setEditingMaterial(null)
+                  }}
                   className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
                 >
                   Cancel
@@ -1253,6 +1376,7 @@ export default function AdminAssignmentsPage() {
                   setShowAssignmentForm(false)
                   setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
                   setEditingAssignment(null)
+                  setExistingResources([])
                 }}
                 disabled={savingAssignment}
                 className="absolute right-4 top-6 text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors p-1 hover:bg-gray-100 rounded"
@@ -1309,10 +1433,48 @@ export default function AdminAssignmentsPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Resources (PDF, Word files)</label>
+                  
+                  {/* Existing Resources (when editing) */}
+                  {editingAssignment && existingResources.length > 0 && (
+                    <div className="mb-3 space-y-2">
+                      <p className="text-sm font-medium text-gray-700">Existing Resources:</p>
+                      {existingResources.map((resource) => (
+                        <div key={resource.id} className="flex items-center justify-between bg-gray-50 p-2 rounded text-sm border border-gray-200">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="text-gray-700">{resource.filename}</span>
+                            <span className="text-xs text-gray-500">({(resource.size / 1024 / 1024).toFixed(2)} MB)</span>
+                          </div>
+                          <button
+                            onClick={() => deleteResource(resource.id)}
+                            disabled={deletingResourceId === resource.id}
+                            className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                            type="button"
+                          >
+                            {deletingResourceId === resource.id ? (
+                              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            )}
+                            <span className="text-xs">Remove</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Add New Resources */}
                   <input
                     type="file"
                     multiple
-                    accept=".pdf,.doc,.docx"
+                    accept=".pdf,.doc,.docx,.ppt,.pptx"
                     onChange={(e) => {
                       const files = Array.from(e.target.files || [])
                       setNewAssignment(prev => ({ ...prev, files: [...prev.files, ...files] }))
@@ -1321,8 +1483,9 @@ export default function AdminAssignmentsPage() {
                   />
                   {newAssignment.files.length > 0 && (
                     <div className="mt-2 space-y-1">
+                      <p className="text-sm font-medium text-gray-700 mb-1">New Files to Upload:</p>
                       {newAssignment.files.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded text-sm">
+                        <div key={index} className="flex items-center justify-between bg-blue-50 p-2 rounded text-sm border border-blue-200">
                           <span className="text-gray-700">{file.name}</span>
                           <button
                             onClick={() => {
@@ -1366,6 +1529,7 @@ export default function AdminAssignmentsPage() {
                     setShowAssignmentForm(false)
                     setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
                     setEditingAssignment(null)
+                    setExistingResources([])
                   }}
                   disabled={savingAssignment}
                   className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1634,22 +1798,28 @@ export default function AdminAssignmentsPage() {
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b">
               <h3 className="text-lg font-semibold text-gray-900">
-                Assign Students to {assigningStudents.type === 'assignment' ? 'Assignment' : 'Quiz'}
+                Assign Students to {
+                  assigningStudents.type === 'assignment' ? 'Assignment' : 
+                  assigningStudents.type === 'quiz' ? 'Quiz' : 
+                  'Course Material'
+                }
               </h3>
             </div>
             <div className="p-6">
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Due Date (Optional)
-                  </label>
-                  <input
-                    type="date"
-                    value={assignmentDueDate}
-                    onChange={(e) => setAssignmentDueDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
-                  />
-                </div>
+                {assigningStudents.type !== 'material' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Due Date (Optional)
+                    </label>
+                    <input
+                      type="date"
+                      value={assignmentDueDate}
+                      onChange={(e) => setAssignmentDueDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Select Students

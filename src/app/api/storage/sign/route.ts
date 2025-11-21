@@ -1,4 +1,4 @@
 export async function POST() {
-  // TODO: return signed upload/download URL for S3
+  // Storage is handled directly in API routes for Netlify compatibility
   return new Response(JSON.stringify({ url: null }), { status: 200 })
 }

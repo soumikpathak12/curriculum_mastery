@@ -66,14 +66,11 @@ export async function POST(req: NextRequest) {
     // Handle file upload
     let fileKey = ''
     if (file) {
-      // Generate a unique file key for the submission
-      const timestamp = Date.now()
-      const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-      fileKey = `assignment-submissions/${assignmentId}/${user.id}/${timestamp}-${sanitizedFilename}`
-      
-      // TODO: Upload file to S3/R2 storage
-      // For now, we'll just store the file key
-      // In production, upload the file to your storage service here
+      // Convert file to base64 for storage (works well with Netlify serverless)
+      const arrayBuffer = await file.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      const fileData = buffer.toString('base64')
+      fileKey = `data:${file.type || 'application/octet-stream'};base64,${fileData}`
     } else if (!comment) {
       return NextResponse.json({ error: 'Either a file or comment is required' }, { status: 400 })
     }

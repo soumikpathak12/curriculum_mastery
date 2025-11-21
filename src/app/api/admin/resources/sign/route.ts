@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // Mock signed URL response for groundwork; replace with real S3/R2 later
+  // Generate file key for storage
   const { filename } = await req.json().catch(() => ({ filename: undefined }))
   if (!filename || typeof filename !== 'string') {
     return NextResponse.json({ error: 'filename required' }, { status: 400 })

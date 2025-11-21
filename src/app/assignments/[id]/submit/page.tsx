@@ -101,8 +101,7 @@ export default function SubmitAssignmentPage() {
       }
       const data = await res.json()
       
-      // In production, this would be a signed URL from S3/R2
-      // For now, we'll create a download link
+      // Create a download link
       const link = document.createElement('a')
       link.href = data.downloadUrl
       link.download = filename

@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string; resourceId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions)
@@ -13,20 +13,56 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    if (session.user?.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email! },
+    })
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    const { id } = await params
+    const { id, resourceId } = await params
+
+    // Get assignment resource
     const resource = await prisma.assignmentResource.findUnique({
-      where: { id },
+      where: { id: resourceId },
       include: {
-        assignment: { select: { title: true } }
+        assignment: {
+          include: {
+            course: true
+          }
+        }
       }
     })
 
-    if (!resource) {
+    if (!resource || resource.assignmentId !== id) {
       return NextResponse.json({ error: 'Resource not found' }, { status: 404 })
+    }
+
+    // Check if user is enrolled in the course
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        userId: user.id,
+        courseId: resource.assignment.courseId,
+        status: 'ACTIVE'
+      }
+    })
+
+    if (!enrollment) {
+      return NextResponse.json({ error: 'You are not enrolled in this course' }, { status: 403 })
+    }
+
+    // Check if assignment is assigned to this user
+    const assignmentAssignment = await prisma.studentAssignment.findUnique({
+      where: {
+        userId_assignmentId: {
+          userId: user.id,
+          assignmentId: id
+        }
+      }
+    })
+
+    if (!assignmentAssignment) {
+      return NextResponse.json({ error: 'This assignment has not been assigned to you' }, { status: 403 })
     }
 
     if (!resource.fileKey) {
@@ -60,11 +96,6 @@ export async function GET(
           }
         })
       }
-    }
-
-    // Fallback: if fileKey is a URL or path, redirect to it
-    if (resource.fileKey.startsWith('http://') || resource.fileKey.startsWith('https://')) {
-      return NextResponse.redirect(resource.fileKey)
     }
 
     return NextResponse.json({ error: 'File format not supported' }, { status: 400 })

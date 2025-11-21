@@ -48,12 +48,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const body = await req.json()
-    const { courseId, title, type, fileKey, filename, size } = body
+    const formData = await req.formData()
+    const file = formData.get('file') as File | null
+    const title = formData.get('title') as string | null
+    const courseId = formData.get('courseId') as string | null
 
-    if (!courseId || !title || !type || !fileKey || !filename || !size) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    if (!file || !title || !courseId) {
+      return NextResponse.json({ error: 'File, title, and courseId are required' }, { status: 400 })
     }
+
+    // Convert file to base64 for storage
+    const arrayBuffer = await file.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+    const fileData = buffer.toString('base64')
+
+    // Auto-detect file type from extension
+    const ext = file.name.toLowerCase().split('.').pop()
+    const typeMap: Record<string, 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX'> = {
+      'pdf': 'PDF',
+      'doc': 'DOC',
+      'docx': 'DOCX',
+      'ppt': 'PPT',
+      'pptx': 'PPTX',
+    }
+    const type = typeMap[ext || ''] || 'PDF'
+
+    // Store file data in database (fileKey will contain base64 data)
+    const fileKey = `data:${file.type || 'application/octet-stream'};base64,${fileData}`
 
     // Resolve course by id or slug
     let course = await prisma.course.findFirst({
@@ -85,8 +106,8 @@ export async function POST(req: NextRequest) {
         title,
         type,
         fileKey,
-        filename,
-        size
+        filename: file.name,
+        size: file.size
       },
       include: {
         course: { select: { title: true } }

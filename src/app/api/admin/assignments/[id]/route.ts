@@ -86,6 +86,11 @@ export async function DELETE(
     const { id } = await params
     
     // Delete related records first (cascade delete should handle this, but being explicit)
+    // Files are stored as base64 in DB, so deleting records removes them automatically
+    await prisma.studentAssignment.deleteMany({
+      where: { assignmentId: id }
+    })
+    
     await prisma.assignmentResource.deleteMany({
       where: { assignmentId: id }
     })
