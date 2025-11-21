@@ -129,7 +129,18 @@ export default function AdminMailersPage() {
         const message = data.failed > 0
           ? `Mailer sent to ${data.successful} recipients (${data.failed} failed)`
           : `Mailer sent successfully to ${data.successful} recipients!`
-        alert(message)
+        
+        // Show detailed results if there are failures
+        if (data.failed > 0 && data.results) {
+          const failedEmails = data.results
+            .filter((r: { success: boolean }) => !r.success)
+            .map((r: { email: string; error?: string }) => `\n- ${r.email}: ${r.error || 'Unknown error'}`)
+            .join('')
+          alert(message + `\n\nFailed emails:${failedEmails}`)
+        } else {
+          alert(message)
+        }
+        
         setComposeForm({
           title: '',
           content: '',
