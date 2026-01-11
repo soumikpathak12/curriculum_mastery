@@ -60,12 +60,18 @@ export async function POST(
 
     // Auto-detect file type from extension
     const ext = file.name.toLowerCase().split('.').pop()
-    const typeMap: Record<string, 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX'> = {
+    const typeMap: Record<string, 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' | 'IMAGE'> = {
       'pdf': 'PDF',
       'doc': 'DOC',
       'docx': 'DOCX',
       'ppt': 'PPT',
       'pptx': 'PPTX',
+      'png': 'IMAGE',
+      'jpg': 'IMAGE',
+      'jpeg': 'IMAGE',
+      'gif': 'IMAGE',
+      'webp': 'IMAGE',
+      'svg': 'IMAGE',
     }
     const type = typeMap[ext || ''] || 'PDF'
 

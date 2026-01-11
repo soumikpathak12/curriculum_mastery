@@ -8,7 +8,12 @@ import type { Role } from '@prisma/client'
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as Adapter,
-  session: { strategy: 'jwt' },
+  secret: process.env.NEXTAUTH_SECRET,
+  session: {
+    strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+    updateAge: 24 * 60 * 60,   // 24 hours
+  },
   pages: {
     signIn: '/login',
   },
@@ -65,6 +70,17 @@ export const authOptions: NextAuthOptions = {
       // doesn't have direct access to user role in all cases
       return `${baseUrl}/dashboard`
     },
+  },
+  cookies: {
+    sessionToken: {
+      name: process.env.NODE_ENV === 'production' ? '__Secure-next-auth.session-token' : 'next-auth.session-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production'
+      }
+    }
   },
   debug: process.env.NODE_ENV === 'development',
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface Submission {
   id: string
@@ -37,7 +37,7 @@ interface AssignmentResource {
   id: string
   assignmentId: string
   title: string
-  type: 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX'
+  type: 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' | 'IMAGE'
   filename: string
   size: number
   createdAt: string
@@ -48,14 +48,21 @@ interface AssignmentResource {
 interface CourseMaterial {
   id: string
   title: string
-  type: 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX'
-  filename: string
-  size: number
+  files: CourseMaterialFile[]
   createdAt: string
   course: {
     id: string
     title: string
   }
+}
+
+interface CourseMaterialFile {
+  id: string
+  materialId: string
+  type: 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' | 'IMAGE'
+  filename: string
+  size: number
+  createdAt: string
 }
 
 interface Quiz {
@@ -108,7 +115,8 @@ export default function AdminAssignmentsPage() {
   const [materials, setMaterials] = useState<CourseMaterial[]>([])
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [courses, setCourses] = useState<Course[]>([])
-// Removed per requirements: per-student assigning
+  const isInitialMount = useRef(true)
+  // Removed per requirements: per-student assigning
   const [loading, setLoading] = useState(true)
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null)
   const [feedback, setFeedback] = useState('')
@@ -116,22 +124,24 @@ export default function AdminAssignmentsPage() {
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'SUBMITTED' | 'REVIEWED' | 'REVISE'>('ALL')
   const [selectedCourse, setSelectedCourse] = useState<string>('')
   const [coursesLoaded, setCoursesLoaded] = useState(false)
-  
+
   // Student assignment state
   const [students, setStudents] = useState<Student[]>([])
   const [assigningStudents, setAssigningStudents] = useState<{ type: 'assignment' | 'quiz' | 'material' | null, id: string | null }>({ type: null, id: null })
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([])
   const [assignmentDueDate, setAssignmentDueDate] = useState('')
-  
+  const [studentSearchQuery, setStudentSearchQuery] = useState('')
+
   // Materials state
   const [showMaterialForm, setShowMaterialForm] = useState(false)
   const [editingMaterial, setEditingMaterial] = useState<CourseMaterial | null>(null)
   const [newMaterial, setNewMaterial] = useState({
     courseId: '',
     title: '',
-    file: null as File | null
+    files: [null] as (File | null)[]
   })
-  
+  const [savingMaterial, setSavingMaterial] = useState(false)
+
   // Assignment state
   const [showAssignmentForm, setShowAssignmentForm] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
@@ -143,9 +153,9 @@ export default function AdminAssignmentsPage() {
     title: '',
     description: '',
     dueAt: '',
-    files: [] as File[]
+    files: [null] as (File | null)[]
   })
-  
+
   // Quiz state
   const [showQuizForm, setShowQuizForm] = useState(false)
   const [editingQuiz, setEditingQuiz] = useState<Quiz | null>(null)
@@ -159,9 +169,10 @@ export default function AdminAssignmentsPage() {
   })
 
   const loadData = async () => {
+    console.log('DEBUG: loadData starting...')
     try {
       setLoading(true)
-      
+
       // Load courses - only once, needed for all tabs (using lightweight endpoint)
       if (!coursesLoaded) {
         const coursesResponse = await fetch('/api/admin/courses')
@@ -185,7 +196,7 @@ export default function AdminAssignmentsPage() {
           setCoursesLoaded(true)
         }
       }
-      
+
       // Load all data in parallel to show counts immediately
       const [materialsResponse, assignmentsResponse, quizzesResponse, enrollmentsResponse] = await Promise.all([
         fetch('/api/admin/course-materials'),
@@ -193,7 +204,7 @@ export default function AdminAssignmentsPage() {
         fetch('/api/admin/quizzes'),
         fetch('/api/admin/enrollments')
       ])
-      
+
       // Load students from enrollments
       if (enrollmentsResponse.ok) {
         const enrollmentsData = await enrollmentsResponse.json()
@@ -209,36 +220,40 @@ export default function AdminAssignmentsPage() {
         })
         setStudents(Array.from(uniqueStudents.values()))
       }
-      
+
       if (materialsResponse.ok) {
         const materialsData = await materialsResponse.json()
         setMaterials(materialsData.materials || [])
       }
-      
+
       if (assignmentsResponse.ok) {
         const assignmentsData = await assignmentsResponse.json()
         setAssignments(assignmentsData.assignments || [])
       }
-      
+
       if (quizzesResponse.ok) {
         const quizzesData = await quizzesResponse.json()
         setQuizzes(quizzesData.quizzes || [])
       }
     } catch (error) {
-      console.error('Failed to load data:', error)
+      console.error('DEBUG: loadData failed:', error)
     } finally {
+      console.log('DEBUG: loadData finished')
       setLoading(false)
     }
   }
 
   // Load all data on mount (to show counts immediately)
   useEffect(() => {
-    loadData()
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+      loadData()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Helper function to detect file type from extension
-  const getFileTypeFromExtension = (filename: string): 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' => {
+  const getFileTypeFromExtension = (filename: string): 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' | 'IMAGE' => {
     const extension = filename.toLowerCase().split('.').pop()
     switch (extension) {
       case 'pdf':
@@ -251,18 +266,31 @@ export default function AdminAssignmentsPage() {
         return 'PPT'
       case 'pptx':
         return 'PPTX'
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'gif':
+      case 'webp':
+      case 'svg':
+        return 'IMAGE'
       default:
         return 'PDF' // Default fallback
     }
   }
 
   // Material functions
+  const openMaterialModal = () => {
+    setEditingMaterial(null)
+    setNewMaterial({ courseId: selectedCourse || '', title: '', files: [null] })
+    setShowMaterialForm(true)
+  }
+
   const editMaterial = (material: CourseMaterial) => {
     setEditingMaterial(material)
     setNewMaterial({
       courseId: material.course.id,
       title: material.title,
-      file: null
+      files: [null]
     })
     setShowMaterialForm(true)
   }
@@ -276,7 +304,7 @@ export default function AdminAssignmentsPage() {
       const response = await fetch(`/api/admin/course-materials/${materialId}`, {
         method: 'DELETE'
       })
-      
+
       if (response.ok) {
         await loadData()
       } else {
@@ -295,29 +323,34 @@ export default function AdminAssignmentsPage() {
       return
     }
 
-    // For editing, file is optional
-    if (!editingMaterial && !newMaterial.file) {
-      alert('Please select a file')
+    // For editing, files are optional
+    if (!editingMaterial && newMaterial.files.filter(Boolean).length === 0) {
+      alert('Please select at least one file')
       return
     }
 
+    setSavingMaterial(true)
     try {
       if (editingMaterial) {
         // Update existing material
         const formData = new FormData()
         formData.append('title', newMaterial.title)
         formData.append('courseId', newMaterial.courseId)
-        if (newMaterial.file) {
-          formData.append('file', newMaterial.file)
+        if (newMaterial.files.length > 0) {
+          newMaterial.files.forEach(file => {
+            if (file) {
+              formData.append('file', file)
+            }
+          })
         }
 
         const response = await fetch(`/api/admin/course-materials/${editingMaterial.id}`, {
           method: 'PUT',
           body: formData
         })
-        
+
         if (response.ok) {
-          setNewMaterial({ courseId: '', title: '', file: null })
+          setNewMaterial({ courseId: '', title: '', files: [null] })
           setEditingMaterial(null)
           setShowMaterialForm(false)
           await loadData()
@@ -327,22 +360,29 @@ export default function AdminAssignmentsPage() {
         }
       } else {
         // Create new material
-        if (!newMaterial.file) {
-          alert('Please select a file')
+        if (newMaterial.files.filter(Boolean).length === 0) {
+          alert('Please select at least one file')
+          setSavingMaterial(false)
           return
         }
 
         const formData = new FormData()
-        formData.append('file', newMaterial.file)
         formData.append('title', newMaterial.title)
-        
+        formData.append('courseId', newMaterial.courseId)
+
+        newMaterial.files.forEach(file => {
+          if (file) {
+            formData.append('file', file)
+          }
+        })
+
         const response = await fetch(`/api/admin/course-materials`, {
           method: 'POST',
           body: formData
         })
-        
+
         if (response.ok) {
-          setNewMaterial({ courseId: '', title: '', file: null })
+          setNewMaterial({ courseId: '', title: '', files: [null] })
           setShowMaterialForm(false)
           await loadData()
         } else {
@@ -353,6 +393,8 @@ export default function AdminAssignmentsPage() {
     } catch (error) {
       console.error('Failed to upload material:', error)
       alert('Failed to upload material')
+    } finally {
+      setSavingMaterial(false)
     }
   }
 
@@ -380,7 +422,7 @@ export default function AdminAssignmentsPage() {
       const response = await fetch(`/api/admin/assignments/resources/${resourceId}`, {
         method: 'DELETE'
       })
-      
+
       if (response.ok) {
         // Remove from existing resources (no need to reload entire page)
         setExistingResources(prev => prev.filter(r => r.id !== resourceId))
@@ -415,7 +457,7 @@ export default function AdminAssignmentsPage() {
       const response = await fetch(`/api/admin/assignments/${assignmentId}`, {
         method: 'DELETE'
       })
-      
+
       if (response.ok) {
         await loadData()
       } else {
@@ -436,6 +478,16 @@ export default function AdminAssignmentsPage() {
 
     try {
       setSavingAssignment(true)
+
+      const filesToUpload = newAssignment.files.filter((f): f is File => f !== null)
+      const totalFilesCount = (editingAssignment ? existingResources.length : 0) + filesToUpload.length
+
+      if (totalFilesCount > 5) {
+        alert('You can only have up to 5 attachments in total')
+        setSavingAssignment(false)
+        return
+      }
+
       // Convert date-only to full datetime for API (end of day)
       const assignmentData = {
         courseId: newAssignment.courseId,
@@ -460,24 +512,25 @@ export default function AdminAssignmentsPage() {
           body: JSON.stringify(assignmentData)
         })
       }
-      
+
       if (response.ok) {
         const data = await response.json()
         const assignmentId = editingAssignment ? editingAssignment.id : data.assignment.id
 
         // Upload files if any (only for new assignments or when editing)
-        if (newAssignment.files.length > 0) {
-          for (const file of newAssignment.files) {
+        const filesToUpload = newAssignment.files.filter((f): f is File => f !== null)
+        if (filesToUpload.length > 0) {
+          for (const file of filesToUpload) {
             // Upload file directly to API route (works with Netlify serverless)
             const formData = new FormData()
             formData.append('file', file)
             formData.append('title', file.name)
-            
+
             const uploadResponse = await fetch(`/api/admin/assignments/${assignmentId}/resources`, {
               method: 'POST',
               body: formData
             })
-            
+
             if (!uploadResponse.ok) {
               const error = await uploadResponse.json()
               alert(`Failed to upload ${file.name}: ${error.error || 'Unknown error'}`)
@@ -485,7 +538,7 @@ export default function AdminAssignmentsPage() {
           }
         }
 
-        setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+        setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [null] })
         setEditingAssignment(null)
         setShowAssignmentForm(false)
         await loadData()
@@ -511,6 +564,7 @@ export default function AdminAssignmentsPage() {
     setAssigningStudents({ type: null, id: null })
     setSelectedStudentIds([])
     setAssignmentDueDate('')
+    setStudentSearchQuery('')
   }
 
   const assignStudentsToAssignment = async (assignmentId: string, studentIds: string[], dueAt?: string) => {
@@ -520,7 +574,7 @@ export default function AdminAssignmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assignmentId, studentIds, dueAt })
       })
-      
+
       if (response.ok) {
         await loadData()
         closeAssignStudentsModal()
@@ -553,7 +607,7 @@ export default function AdminAssignmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(quizData)
       })
-      
+
       if (response.ok) {
         setNewQuiz({ courseId: '', title: '', description: '', dueAt: '', questions: [] })
         setShowQuizForm(false)
@@ -578,7 +632,7 @@ export default function AdminAssignmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quizId, studentIds, dueAt })
       })
-      
+
       if (response.ok) {
         await loadData()
         closeAssignStudentsModal()
@@ -598,7 +652,7 @@ export default function AdminAssignmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ materialId, studentIds })
       })
-      
+
       if (response.ok) {
         await loadData()
         closeAssignStudentsModal()
@@ -641,7 +695,7 @@ export default function AdminAssignmentsPage() {
   const updateQuizQuestion = (index: number, field: string, value: any) => {
     setNewQuiz(prev => ({
       ...prev,
-      questions: prev.questions.map((q, i) => 
+      questions: prev.questions.map((q, i) =>
         i === index ? { ...q, [field]: value } : q
       )
     }))
@@ -690,7 +744,7 @@ export default function AdminAssignmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(quizData)
       })
-      
+
       if (response.ok) {
         setNewQuiz({ courseId: '', title: '', description: '', dueAt: '', questions: [] })
         setShowQuizForm(false)
@@ -717,7 +771,7 @@ export default function AdminAssignmentsPage() {
       const response = await fetch(`/api/admin/quizzes/${quizId}`, {
         method: 'DELETE'
       })
-      
+
       if (response.ok) {
         await loadData()
       } else {
@@ -737,7 +791,7 @@ export default function AdminAssignmentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, feedback })
       })
-      
+
       if (response.ok) {
         await loadData()
         setSelectedSubmission(null)
@@ -797,13 +851,13 @@ export default function AdminAssignmentsPage() {
     }
   }
 
-  const filteredSubmissions = assignments.flatMap(assignment => 
+  const filteredSubmissions = assignments.flatMap(assignment =>
     assignment.submissions.map(submission => ({
       ...submission,
       assignmentTitle: assignment.title,
       courseTitle: assignment.course.title
     }))
-  ).filter(submission => 
+  ).filter(submission =>
     filterStatus === 'ALL' || submission.status === filterStatus
   )
 
@@ -835,31 +889,28 @@ export default function AdminAssignmentsPage() {
           <nav className="-mb-px flex space-x-8">
             <button
               onClick={() => setActiveTab('materials')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'materials'
-                  ? 'border-brand-primary text-brand-primary'
-                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
-              }`}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'materials'
+                ? 'border-brand-primary text-brand-primary'
+                : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                }`}
             >
               Course Materials ({materials.length})
             </button>
             <button
               onClick={() => setActiveTab('assignments')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'assignments'
-                  ? 'border-brand-primary text-brand-primary'
-                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
-              }`}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'assignments'
+                ? 'border-brand-primary text-brand-primary'
+                : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                }`}
             >
               Assignments ({assignments.length})
             </button>
             <button
               onClick={() => setActiveTab('quizzes')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'quizzes'
-                  ? 'border-brand-primary text-brand-primary'
-                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
-              }`}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'quizzes'
+                ? 'border-brand-primary text-brand-primary'
+                : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                }`}
             >
               Quizzes ({quizzes.length})
             </button>
@@ -935,9 +986,14 @@ export default function AdminAssignmentsPage() {
                       <h3 className="font-medium text-gray-900">{material.title}</h3>
                       <div className="text-sm text-gray-600 mt-1">
                         <p><strong>Course:</strong> {material.course.title}</p>
-                        <p><strong>Type:</strong> {material.type}</p>
-                        <p><strong>File:</strong> {material.filename}</p>
-                        <p><strong>Size:</strong> {(material.size / 1024 / 1024).toFixed(2)} MB</p>
+                        <p><strong>Files:</strong> {material.files?.length || 0}</p>
+                        <div className="ml-4 mt-1 space-y-1">
+                          {material.files?.map((file, idx) => (
+                            <p key={idx} className="text-xs text-gray-500">
+                              • {file.filename} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                            </p>
+                          ))}
+                        </div>
                         <p><strong>Uploaded:</strong> {new Date(material.createdAt).toLocaleDateString()}</p>
                       </div>
                     </div>
@@ -977,21 +1033,19 @@ export default function AdminAssignmentsPage() {
             <nav className="-mb-px flex space-x-8">
               <button
                 onClick={() => setAssignmentsSubTab('management')}
-                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
-                  assignmentsSubTab === 'management'
-                    ? 'border-brand-primary text-brand-primary'
-                    : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
-                }`}
+                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${assignmentsSubTab === 'management'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                  }`}
               >
                 Assignment Management ({assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length})
               </button>
               <button
                 onClick={() => setAssignmentsSubTab('submissions')}
-                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
-                  assignmentsSubTab === 'submissions'
-                    ? 'border-brand-primary text-brand-primary'
-                    : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
-                }`}
+                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${assignmentsSubTab === 'submissions'
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-gray-500 hover:text-brand-primary hover:border-brand-primary/30'
+                  }`}
               >
                 Submissions ({filteredSubmissions.length})
               </button>
@@ -1004,70 +1058,70 @@ export default function AdminAssignmentsPage() {
               <div className="p-6 border-b">
                 <h2 className="text-lg font-semibold text-gray-900">Assignment Management</h2>
               </div>
-            <div className="divide-y">
-              {assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length === 0 ? (
-                <div className="p-6 text-center text-gray-500">
-                  No assignments found.
-                </div>
-              ) : (
-                assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).map((assignment) => (
-                  <div key={assignment.id} className="p-6 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-medium text-gray-900">{assignment.title}</h3>
-                        <div className="text-sm text-gray-600 mt-1">
-                          <p><strong>Course:</strong> {assignment.course.title}</p>
-                          <p><strong>Description:</strong> {assignment.description || 'No description'}</p>
-                          <p><strong>Due Date:</strong> {assignment.dueAt ? new Date(assignment.dueAt).toLocaleDateString() : 'No due date'}</p>
-                          {assignment.resources && assignment.resources.length > 0 && (
-                            <div className="mt-2">
-                              <p className="font-medium text-gray-700 mb-1">Resources:</p>
-                              <div className="flex flex-wrap gap-2">
-                                {assignment.resources.map((resource) => (
-                                  <button
-                                    key={resource.id}
-                                    onClick={() => downloadAssignmentResource(resource.id, resource.filename)}
-                                    className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
-                                  >
-                                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                    <span className="text-gray-700 hover:text-blue-600">{resource.filename}</span>
-                                  </button>
-                                ))}
+              <div className="divide-y">
+                {assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length === 0 ? (
+                  <div className="p-6 text-center text-gray-500">
+                    No assignments found.
+                  </div>
+                ) : (
+                  assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).map((assignment) => (
+                    <div key={assignment.id} className="p-6 hover:bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-medium text-gray-900">{assignment.title}</h3>
+                          <div className="text-sm text-gray-600 mt-1">
+                            <p><strong>Course:</strong> {assignment.course.title}</p>
+                            <p><strong>Description:</strong> {assignment.description || 'No description'}</p>
+                            <p><strong>Due Date:</strong> {assignment.dueAt ? new Date(assignment.dueAt).toLocaleDateString() : 'No due date'}</p>
+                            {assignment.resources && assignment.resources.length > 0 && (
+                              <div className="mt-2">
+                                <p className="font-medium text-gray-700 mb-1">Resources:</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {assignment.resources.map((resource) => (
+                                    <button
+                                      key={resource.id}
+                                      onClick={() => downloadAssignmentResource(resource.id, resource.filename)}
+                                      className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
+                                    >
+                                      <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                      </svg>
+                                      <span className="text-gray-700 hover:text-blue-600">{resource.filename}</span>
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          )}
-                          {/* Assigned Students removed */}
-                          <p className="mt-1"><strong>Submissions:</strong> {assignment.submissions.length}</p>
+                            )}
+                            {/* Assigned Students removed */}
+                            <p className="mt-1"><strong>Submissions:</strong> {assignment.submissions.length}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openAssignStudentsModal('assignment', assignment.id)}
+                            className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                          >
+                            Assign Students
+                          </button>
+                          <button
+                            onClick={() => editAssignment(assignment)}
+                            className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteAssignment(assignment.id)}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => openAssignStudentsModal('assignment', assignment.id)}
-                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
-                        >
-                          Assign Students
-                        </button>
-                        <button
-                          onClick={() => editAssignment(assignment)}
-                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteAssignment(assignment.id)}
-                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
-          </div>
           )}
 
           {/* Assignment Submissions Sub-tab */}
@@ -1098,52 +1152,51 @@ export default function AdminAssignmentsPage() {
                   <h2 className="text-lg font-semibold text-gray-900">Assignment Submissions</h2>
                 </div>
                 <div className="divide-y">
-              {filteredSubmissions.length === 0 ? (
-                <div className="p-6 text-center text-gray-500">
-                  No submissions found.
-                </div>
-              ) : (
-                filteredSubmissions.map((submission) => (
-                  <div key={submission.id} className="p-6 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-4 mb-2">
-                          <h3 className="font-medium text-gray-900">{submission.assignmentTitle}</h3>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            submission.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
-                            submission.status === 'REVIEWED' ? 'bg-green-100 text-green-800' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {submission.status}
-                          </span>
-                        </div>
-                        <div className="text-sm text-gray-600 mb-2">
-                          <p><strong>Course:</strong> {submission.courseTitle}</p>
-                          <p><strong>Student:</strong> {submission.user.name || submission.user.email}</p>
-                          <p><strong>Submitted:</strong> {new Date(submission.createdAt).toLocaleDateString()}</p>
-                          {submission.feedback && (
-                            <p><strong>Feedback:</strong> {submission.feedback}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => downloadSubmission(submission.id, `${submission.assignmentTitle}_${submission.user.name || submission.user.email}.pdf`)}
-                          className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-                        >
-                          Download
-                        </button>
-                        <button
-                          onClick={() => setSelectedSubmission(submission)}
-                          className="px-3 py-1 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
-                        >
-                          Review
-                        </button>
-                      </div>
+                  {filteredSubmissions.length === 0 ? (
+                    <div className="p-6 text-center text-gray-500">
+                      No submissions found.
                     </div>
-                  </div>
-                ))
-              )}
+                  ) : (
+                    filteredSubmissions.map((submission) => (
+                      <div key={submission.id} className="p-6 hover:bg-gray-50">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-4 mb-2">
+                              <h3 className="font-medium text-gray-900">{submission.assignmentTitle}</h3>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${submission.status === 'SUBMITTED' ? 'bg-yellow-100 text-yellow-800' :
+                                submission.status === 'REVIEWED' ? 'bg-green-100 text-green-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                {submission.status}
+                              </span>
+                            </div>
+                            <div className="text-sm text-gray-600 mb-2">
+                              <p><strong>Course:</strong> {submission.courseTitle}</p>
+                              <p><strong>Student:</strong> {submission.user.name || submission.user.email}</p>
+                              <p><strong>Submitted:</strong> {new Date(submission.createdAt).toLocaleDateString()}</p>
+                              {submission.feedback && (
+                                <p><strong>Feedback:</strong> {submission.feedback}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => downloadSubmission(submission.id, `${submission.assignmentTitle}_${submission.user.name || submission.user.email}.pdf`)}
+                              className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                            >
+                              Download
+                            </button>
+                            <button
+                              onClick={() => setSelectedSubmission(submission)}
+                              className="px-3 py-1 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                            >
+                              Review
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </>
@@ -1155,70 +1208,70 @@ export default function AdminAssignmentsPage() {
               <div className="p-6 border-b">
                 <h2 className="text-lg font-semibold text-gray-900">Assignment Management</h2>
               </div>
-            <div className="divide-y">
-              {assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length === 0 ? (
-                <div className="p-6 text-center text-gray-500">
-                  No assignments found.
-                </div>
-              ) : (
-                assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).map((assignment) => (
-                  <div key={assignment.id} className="p-6 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-medium text-gray-900">{assignment.title}</h3>
-                        <div className="text-sm text-gray-600 mt-1">
-                          <p><strong>Course:</strong> {assignment.course.title}</p>
-                          <p><strong>Description:</strong> {assignment.description || 'No description'}</p>
-                          <p><strong>Due Date:</strong> {assignment.dueAt ? new Date(assignment.dueAt).toLocaleDateString() : 'No due date'}</p>
-                          {assignment.resources && assignment.resources.length > 0 && (
-                            <div className="mt-2">
-                              <p className="font-medium text-gray-700 mb-1">Resources:</p>
-                              <div className="flex flex-wrap gap-2">
-                                {assignment.resources.map((resource) => (
-                                  <button
-                                    key={resource.id}
-                                    onClick={() => downloadAssignmentResource(resource.id, resource.filename)}
-                                    className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
-                                  >
-                                    <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                    <span className="text-gray-700 hover:text-blue-600">{resource.filename}</span>
-                                  </button>
-                                ))}
+              <div className="divide-y">
+                {assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).length === 0 ? (
+                  <div className="p-6 text-center text-gray-500">
+                    No assignments found.
+                  </div>
+                ) : (
+                  assignments.filter(a => !selectedCourse || a.course.id === selectedCourse).map((assignment) => (
+                    <div key={assignment.id} className="p-6 hover:bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-medium text-gray-900">{assignment.title}</h3>
+                          <div className="text-sm text-gray-600 mt-1">
+                            <p><strong>Course:</strong> {assignment.course.title}</p>
+                            <p><strong>Description:</strong> {assignment.description || 'No description'}</p>
+                            <p><strong>Due Date:</strong> {assignment.dueAt ? new Date(assignment.dueAt).toLocaleDateString() : 'No due date'}</p>
+                            {assignment.resources && assignment.resources.length > 0 && (
+                              <div className="mt-2">
+                                <p className="font-medium text-gray-700 mb-1">Resources:</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {assignment.resources.map((resource) => (
+                                    <button
+                                      key={resource.id}
+                                      onClick={() => downloadAssignmentResource(resource.id, resource.filename)}
+                                      className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
+                                    >
+                                      <svg className="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                      </svg>
+                                      <span className="text-gray-700 hover:text-blue-600">{resource.filename}</span>
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          )}
-                          {/* Assigned Students removed */}
-                          <p className="mt-1"><strong>Submissions:</strong> {assignment.submissions.length}</p>
+                            )}
+                            {/* Assigned Students removed */}
+                            <p className="mt-1"><strong>Submissions:</strong> {assignment.submissions.length}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openAssignStudentsModal('assignment', assignment.id)}
+                            className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                          >
+                            Assign Students
+                          </button>
+                          <button
+                            onClick={() => editAssignment(assignment)}
+                            className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteAssignment(assignment.id)}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => openAssignStudentsModal('assignment', assignment.id)}
-                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
-                        >
-                          Assign Students
-                        </button>
-                        <button
-                          onClick={() => editAssignment(assignment)}
-                          className="px-4 py-2 bg-brand-primary text-white rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all hover:scale-105"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteAssignment(assignment.id)}
-                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
-          </div>
           )}
         </div>
       )}
@@ -1304,7 +1357,8 @@ export default function AdminAssignmentsPage() {
                   <select
                     value={newMaterial.courseId}
                     onChange={(e) => setNewMaterial(prev => ({ ...prev, courseId: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    disabled={savingMaterial}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
                   >
                     <option value="">Select a course</option>
                     {courses.map(course => (
@@ -1318,41 +1372,101 @@ export default function AdminAssignmentsPage() {
                     type="text"
                     value={newMaterial.title}
                     onChange={(e) => setNewMaterial(prev => ({ ...prev, title: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    disabled={savingMaterial}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
                     placeholder="Enter material title"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    File {editingMaterial && '(Leave empty to keep existing file)'}
-                  </label>
-                  <input
-                    type="file"
-                    accept=".pdf,.doc,.docx,.ppt,.pptx"
-                    onChange={(e) => setNewMaterial(prev => ({ ...prev, file: e.target.files?.[0] || null }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
-                  />
-                  {editingMaterial && (
-                    <p className="mt-1 text-sm text-gray-500">
-                      Current file: {editingMaterial.filename} ({(editingMaterial.size / 1024 / 1024).toFixed(2)} MB)
-                    </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Files {editingMaterial && '(Add new files below)'}
+                    </label>
+                    {newMaterial.files.length < 5 && (
+                      <button
+                        onClick={() => setNewMaterial(prev => ({ ...prev, files: [...prev.files, null] }))}
+                        disabled={savingMaterial}
+                        className="text-xs text-brand-primary font-medium hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
+                      >
+                        + Add another file
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    {newMaterial.files.map((file, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.svg"
+                          onChange={(e) => {
+                            const updatedFiles = [...newMaterial.files]
+                            updatedFiles[index] = e.target.files?.[0] || null
+                            setNewMaterial(prev => ({ ...prev, files: updatedFiles }))
+                          }}
+                          disabled={savingMaterial}
+                          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        />
+                        {newMaterial.files.length > 1 && (
+                          <button
+                            onClick={() => {
+                              const updatedFiles = newMaterial.files.filter((_, i) => i !== index)
+                              setNewMaterial(prev => ({ ...prev, files: updatedFiles }))
+                            }}
+                            disabled={savingMaterial}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Remove"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">Each file should be less than 500MB (Max 5 files)</p>
+
+                  {editingMaterial && editingMaterial.files && editingMaterial.files.length > 0 && (
+                    <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                      <p className="text-xs font-semibold text-gray-600 mb-2 uppercase">Existing Files:</p>
+                      <ul className="space-y-1">
+                        {editingMaterial.files.map((file, idx) => (
+                          <li key={idx} className="text-xs text-gray-500 flex justify-between">
+                            <span>{file.filename}</span>
+                            <span>{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
                 <button
                   onClick={uploadMaterial}
-                  className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105"
+                  disabled={savingMaterial}
+                  className="px-4 py-2 bg-brand-primary text-white rounded-lg font-medium shadow-md hover:shadow-lg transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
                 >
-                  {editingMaterial ? 'Update' : 'Upload'}
+                  {savingMaterial && (
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {savingMaterial
+                    ? (editingMaterial ? 'Updating...' : 'Uploading...')
+                    : (editingMaterial ? 'Update' : 'Upload')}
                 </button>
                 <button
                   onClick={() => {
+                    if (savingMaterial) return
                     setShowMaterialForm(false)
-                    setNewMaterial({ courseId: '', title: '', file: null })
+                    setNewMaterial({ courseId: '', title: '', files: [null] })
                     setEditingMaterial(null)
                   }}
-                  className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  disabled={savingMaterial}
+                  className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
@@ -1374,7 +1488,7 @@ export default function AdminAssignmentsPage() {
                 onClick={() => {
                   if (savingAssignment) return
                   setShowAssignmentForm(false)
-                  setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+                  setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [null] })
                   setEditingAssignment(null)
                   setExistingResources([])
                 }}
@@ -1432,79 +1546,81 @@ export default function AdminAssignmentsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Resources (PDF, Word files)</label>
-                  
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">Resources (PDF, Word, Images)</label>
+                    {newAssignment.files.length + (editingAssignment ? existingResources.length : 0) < 5 && (
+                      <button
+                        onClick={() => setNewAssignment(prev => ({ ...prev, files: [...prev.files, null] }))}
+                        disabled={savingAssignment}
+                        className="text-xs text-brand-primary font-medium hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
+                      >
+                        + Add another file
+                      </button>
+                    )}
+                  </div>
+
                   {/* Existing Resources (when editing) */}
                   {editingAssignment && existingResources.length > 0 && (
-                    <div className="mb-3 space-y-2">
-                      <p className="text-sm font-medium text-gray-700">Existing Resources:</p>
+                    <div className="mb-4 space-y-2">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Existing Resources:</p>
                       {existingResources.map((resource) => (
                         <div key={resource.id} className="flex items-center justify-between bg-gray-50 p-2 rounded text-sm border border-gray-200">
                           <div className="flex items-center gap-2">
                             <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
-                            <span className="text-gray-700">{resource.filename}</span>
-                            <span className="text-xs text-gray-500">({(resource.size / 1024 / 1024).toFixed(2)} MB)</span>
+                            <span className="text-gray-700 truncate max-w-[200px]">{resource.filename}</span>
+                            <span className="text-[10px] text-gray-400">({(resource.size / 1024 / 1024).toFixed(2)} MB)</span>
                           </div>
                           <button
                             onClick={() => deleteResource(resource.id)}
                             disabled={deletingResourceId === resource.id}
-                            className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                            type="button"
-                          >
-                            {deletingResourceId === resource.id ? (
-                              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            )}
-                            <span className="text-xs">Remove</span>
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Add New Resources */}
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.doc,.docx,.ppt,.pptx"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || [])
-                      setNewAssignment(prev => ({ ...prev, files: [...prev.files, ...files] }))
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
-                  />
-                  {newAssignment.files.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      <p className="text-sm font-medium text-gray-700 mb-1">New Files to Upload:</p>
-                      {newAssignment.files.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between bg-blue-50 p-2 rounded text-sm border border-blue-200">
-                          <span className="text-gray-700">{file.name}</span>
-                          <button
-                            onClick={() => {
-                              setNewAssignment(prev => ({
-                                ...prev,
-                                files: prev.files.filter((_, i) => i !== index)
-                              }))
-                            }}
-                            className="text-red-600 hover:text-red-800"
+                            className="text-red-500 hover:text-red-700 disabled:opacity-50"
                             type="button"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                           </button>
                         </div>
                       ))}
                     </div>
                   )}
+
+                  {/* Add New Resources */}
+                  <div className="space-y-3">
+                    {newAssignment.files.map((file, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.svg"
+                          onChange={(e) => {
+                            const updatedFiles = [...newAssignment.files]
+                            updatedFiles[index] = e.target.files?.[0] || null
+                            setNewAssignment(prev => ({ ...prev, files: updatedFiles }))
+                          }}
+                          disabled={savingAssignment}
+                          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        />
+                        {newAssignment.files.length > 1 && (
+                          <button
+                            onClick={() => {
+                              const updatedFiles = newAssignment.files.filter((_, i) => i !== index)
+                              setNewAssignment(prev => ({ ...prev, files: updatedFiles }))
+                            }}
+                            disabled={savingAssignment}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded"
+                            title="Remove"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[10px] text-gray-500 italic">Max 5 total attachments per assignment. Each file &lt; 500MB.</p>
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
@@ -1519,15 +1635,15 @@ export default function AdminAssignmentsPage() {
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                   )}
-                  {savingAssignment 
-                    ? (editingAssignment ? 'Updating...' : 'Creating...') 
+                  {savingAssignment
+                    ? (editingAssignment ? 'Updating...' : 'Creating...')
                     : (editingAssignment ? 'Update Assignment' : 'Create Assignment')}
                 </button>
                 <button
                   onClick={() => {
                     if (savingAssignment) return
                     setShowAssignmentForm(false)
-                    setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [] })
+                    setNewAssignment({ courseId: '', title: '', description: '', dueAt: '', files: [null] })
                     setEditingAssignment(null)
                     setExistingResources([])
                   }}
@@ -1610,7 +1726,7 @@ export default function AdminAssignmentsPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary"
                   />
                 </div>
-                
+
                 {/* Questions */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -1799,9 +1915,9 @@ export default function AdminAssignmentsPage() {
             <div className="p-6 border-b">
               <h3 className="text-lg font-semibold text-gray-900">
                 Assign Students to {
-                  assigningStudents.type === 'assignment' ? 'Assignment' : 
-                  assigningStudents.type === 'quiz' ? 'Quiz' : 
-                  'Course Material'
+                  assigningStudents.type === 'assignment' ? 'Assignment' :
+                    assigningStudents.type === 'quiz' ? 'Quiz' :
+                      'Course Material'
                 }
               </h3>
             </div>
@@ -1821,39 +1937,60 @@ export default function AdminAssignmentsPage() {
                   </div>
                 )}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Students
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Select Students
+                    </label>
+                    <div className="relative w-64">
+                      <input
+                        type="text"
+                        placeholder="Search students..."
+                        value={studentSearchQuery}
+                        onChange={(e) => setStudentSearchQuery(e.target.value)}
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-primary pl-8"
+                      />
+                      <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                  </div>
                   <div className="border border-gray-300 rounded-md max-h-64 overflow-y-auto">
-                    {students.length === 0 ? (
-                      <div className="p-4 text-center text-gray-500">No students found</div>
-                    ) : (
-                      <div className="divide-y">
-                        {students.map((student) => (
-                          <label
-                            key={student.id}
-                            className="flex items-center p-3 hover:bg-gray-50 cursor-pointer"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedStudentIds.includes(student.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedStudentIds([...selectedStudentIds, student.id])
-                                } else {
-                                  setSelectedStudentIds(selectedStudentIds.filter(id => id !== student.id))
-                                }
-                              }}
-                              className="w-4 h-4 text-brand-primary border-gray-300 rounded focus:ring-brand-primary"
-                            />
-                            <span className="ml-3 text-sm text-gray-900">
-                              {student.name || student.email}
-                              {student.name && <span className="text-gray-500 ml-1">({student.email})</span>}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                    {(() => {
+                      const filteredStudents = students.filter(student =>
+                        (student.name?.toLowerCase().includes(studentSearchQuery.toLowerCase())) ||
+                        (student.email?.toLowerCase().includes(studentSearchQuery.toLowerCase()))
+                      );
+
+                      return filteredStudents.length === 0 ? (
+                        <div className="p-4 text-center text-gray-500">No students found matching "{studentSearchQuery}"</div>
+                      ) : (
+                        <div className="divide-y">
+                          {filteredStudents.map((student) => (
+                            <label
+                              key={student.id}
+                              className="flex items-center p-3 hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedStudentIds.includes(student.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedStudentIds([...selectedStudentIds, student.id])
+                                  } else {
+                                    setSelectedStudentIds(selectedStudentIds.filter(id => id !== student.id))
+                                  }
+                                }}
+                                className="w-4 h-4 text-brand-primary border-gray-300 rounded focus:ring-brand-primary"
+                              />
+                              <span className="ml-3 text-sm text-gray-900">
+                                {student.name || student.email}
+                                {student.name && <span className="text-gray-500 ml-1">({student.email})</span>}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      )
+                    })()}
                   </div>
                   {students.length > 0 && (
                     <p className="mt-2 text-sm text-gray-600">

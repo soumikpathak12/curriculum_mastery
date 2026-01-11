@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const courseId = searchParams.get('courseId')
 
+    console.log('DEBUG: GET /api/admin/assignments/enhanced starting...')
     const assignments = await prisma.assignment.findMany({
       where: courseId ? { courseId } : {},
       include: {
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { createdAt: 'desc' }
     })
-
+    console.log(`DEBUG: GET /api/admin/assignments/enhanced success, found ${assignments.length} items`)
     return NextResponse.json({ assignments })
   } catch (error) {
     console.error('Failed to fetch assignments:', error)

@@ -36,39 +36,14 @@ export async function PUT(
       return NextResponse.json({ error: 'Material not found' }, { status: 404 })
     }
 
-    let fileKey = existingMaterial.fileKey
-    let filename = existingMaterial.filename
-    let size = existingMaterial.size
-    let type = existingMaterial.type
-
-    // If file is provided, update it
-    if (file) {
-      // Convert file to base64 for storage
-      const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      const fileData = buffer.toString('base64')
-
-      // Auto-detect file type from extension
-      const ext = file.name.toLowerCase().split('.').pop()
-      const typeMap: Record<string, 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX'> = {
-        'pdf': 'PDF',
-        'doc': 'DOC',
-        'docx': 'DOCX',
-        'ppt': 'PPT',
-        'pptx': 'PPTX',
-      }
-      type = typeMap[ext || ''] || 'PDF'
-
-      fileKey = `data:${file.type || 'application/octet-stream'};base64,${fileData}`
-      filename = file.name
-      size = file.size
-    }
+    const files = formData.getAll('file') as File[]
 
     // Resolve course by id or slug
     let course = await prisma.course.findFirst({
       where: { OR: [{ id: courseId || '' }, { slug: courseId || '' }] },
-      select: { id: true, slug: true }
+      select: { id: true, slug: true, title: true }
     })
+
     if (!course && courseId) {
       const canonical: Record<string, string> = {
         'igcse-basic': 'IGCSE Music Basic',
@@ -82,25 +57,62 @@ export async function PUT(
           where: { slug: courseId },
           update: {},
           create: { title: titleFromSlug, slug: courseId, price: 0, currency: 'INR' },
-          select: { id: true, slug: true }
+          select: { id: true, slug: true, title: true }
         })
       }
     }
 
+    // Update main material info
     const material = await prisma.courseMaterial.update({
       where: { id },
       data: {
         courseId: course?.id || existingMaterial.courseId,
         title,
-        type,
-        fileKey,
-        filename,
-        size
       },
       include: {
-        course: { select: { title: true } }
+        course: { select: { title: true } },
+        files: true
       }
     })
+
+    // Add new files if provided
+    const newFiles = []
+    for (const file of files) {
+      // Convert file to base64 for storage
+      const arrayBuffer = await file.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      const fileData = buffer.toString('base64')
+
+      // Auto-detect file type from extension
+      const ext = file.name.toLowerCase().split('.').pop()
+      const typeMap: Record<string, 'PDF' | 'DOC' | 'DOCX' | 'PPT' | 'PPTX' | 'IMAGE'> = {
+        'pdf': 'PDF',
+        'doc': 'DOC',
+        'docx': 'DOCX',
+        'ppt': 'PPT',
+        'pptx': 'PPTX',
+        'png': 'IMAGE',
+        'jpg': 'IMAGE',
+        'jpeg': 'IMAGE',
+        'gif': 'IMAGE',
+        'webp': 'IMAGE',
+        'svg': 'IMAGE'
+      }
+      const type = typeMap[ext || ''] || 'PDF'
+
+      const fileKey = `data:${file.type || 'application/octet-stream'};base64,${fileData}`
+
+      const fileEntry = await prisma.courseMaterialFile.create({
+        data: {
+          materialId: id,
+          type,
+          fileKey,
+          filename: file.name,
+          size: file.size
+        }
+      })
+      newFiles.push(fileEntry)
+    }
 
     return NextResponse.json({ material })
   } catch (error) {
@@ -124,12 +136,12 @@ export async function DELETE(
     }
 
     const { id } = await params
-    
+
     // Delete related student assignments first (cascade should handle this, but being explicit)
     await prisma.studentMaterialAssignment.deleteMany({
       where: { materialId: id }
     })
-    
+
     // Delete the material (file is stored as base64 in DB, so deleting record removes it)
     await prisma.courseMaterial.delete({
       where: { id }

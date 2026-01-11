@@ -211,16 +211,27 @@ model CourseMaterial {
   id                 String                      @id @default(cuid())
   courseId           String
   title              String
-  type               ResourceType
-  fileKey            String
-  filename           String
-  size               Int
   createdAt          DateTime                    @default(now())
   updatedAt          DateTime                    @updatedAt
   course             Course                      @relation(fields: [courseId], references: [id])
+  files              CourseMaterialFile[]
   studentAssignments StudentMaterialAssignment[]
 
   @@index([courseId])
+}
+
+model CourseMaterialFile {
+  id         String       @id @default(cuid())
+  materialId String
+  type       ResourceType
+  fileKey    String
+  filename   String
+  size       Int
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  material   CourseMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@index([materialId])
 }
 
 /// Quiz system
@@ -282,6 +293,7 @@ enum ResourceType {
   DOCX
   PPT
   PPTX
+  IMAGE
 }
 
 enum EnrollmentStatus {

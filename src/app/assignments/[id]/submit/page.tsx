@@ -64,13 +64,13 @@ export default function SubmitAssignmentPage() {
         throw new Error(data.error || 'Failed to load assignment')
       }
       const data = await res.json()
-      
+
       // Check if already submitted
       if (data.assignment.submissions && data.assignment.submissions.length > 0) {
         router.push(`/assignments/${assignmentId}/submission`)
         return
       }
-      
+
       setAssignment(data.assignment)
     } catch (err) {
       console.error('Failed to load assignment:', err)
@@ -83,9 +83,9 @@ export default function SubmitAssignmentPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      // Check file size (max 10MB)
-      if (file.size > 10 * 1024 * 1024) {
-        alert('File size must be less than 10MB')
+      // Check file size (max 500MB)
+      if (file.size > 500 * 1024 * 1024) {
+        alert('File size must be less than 500MB')
         return
       }
       setSelectedFile(file)
@@ -100,7 +100,7 @@ export default function SubmitAssignmentPage() {
         throw new Error(data.error || 'Failed to get download URL')
       }
       const data = await res.json()
-      
+
       // Create a download link
       const link = document.createElement('a')
       link.href = data.downloadUrl
@@ -108,7 +108,7 @@ export default function SubmitAssignmentPage() {
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      
+
       // If it's a mock URL, show a message
       if (data.downloadUrl.includes('example-storage.local')) {
         alert('File download functionality will be available once storage is configured.')
@@ -283,7 +283,7 @@ export default function SubmitAssignmentPage() {
           {/* Submission Form */}
           <div className="border-t border-gray-200 pt-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Submit Assignment</h2>
-            
+
             {/* File Upload */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -306,7 +306,7 @@ export default function SubmitAssignmentPage() {
                       <p className="mt-2 text-sm text-gray-600">
                         <span className="font-medium text-brand-primary">Click to upload</span> or drag and drop
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">Max file size: 10MB</p>
+                      <p className="text-xs text-gray-500 mt-1">File should be less than 500MB</p>
                     </div>
                   </div>
                 </label>

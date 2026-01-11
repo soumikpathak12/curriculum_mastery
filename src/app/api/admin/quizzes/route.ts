@@ -17,13 +17,12 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const courseId = searchParams.get('courseId')
 
+    console.log('DEBUG: GET /api/admin/quizzes starting...')
     const quizzes = await prisma.quiz.findMany({
       where: courseId ? { courseId } : {},
       include: {
         course: { select: { id: true, title: true } },
-        questions: {
-          orderBy: { order: 'asc' }
-        },
+        questions: true,
         // studentAssignments deprecated for now
         submissions: {
           include: {
@@ -33,7 +32,7 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { createdAt: 'desc' }
     })
-
+    console.log(`DEBUG: GET /api/admin/quizzes success, found ${quizzes.length} items`)
     return NextResponse.json({ quizzes })
   } catch (error) {
     console.error('Failed to fetch quizzes:', error)
@@ -115,7 +114,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('Failed to create quiz:', error)
     const errorMessage = error?.message || error?.code || 'Failed to create quiz'
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: 'Failed to create quiz',
       details: errorMessage,
       code: error?.code

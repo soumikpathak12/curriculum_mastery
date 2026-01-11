@@ -14,15 +14,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    // Extract courseId from query parameters
+    const courseId = req.nextUrl.searchParams.get('courseId')
+
+    console.log('DEBUG: GET /api/admin/enrollments starting...')
     const enrollments = await prisma.enrollment.findMany({
+      where: {
+        AND: [
+          courseId ? { OR: [{ courseId }, { course: { slug: courseId } }] } : {},
+          { user: { blocked: false } }
+        ]
+      },
       include: {
-        user: { select: { id: true, name: true, email: true } },
-        course: { select: { id: true, title: true, price: true } },
-        payment: { select: { id: true, orderId: true, amount: true, provider: true } }
+        user: { select: { id: true, name: true, email: true, blocked: true } },
+        course: { select: { id: true, title: true, slug: true } }
       },
       orderBy: { createdAt: 'desc' }
     })
-
+    console.log(`DEBUG: GET /api/admin/enrollments success, found ${enrollments.length} items`)
     return NextResponse.json({ enrollments })
   } catch (error) {
     console.error('Failed to fetch enrollments:', error)
